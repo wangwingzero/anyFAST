@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.venv/
+
+# Build outputs
+rust/src-tauri/target/
+dist/
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Tool specific
+.ace-tool/
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Cache
+.cache/
