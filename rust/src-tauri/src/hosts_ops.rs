@@ -198,8 +198,15 @@ pub fn get_permission_status() -> (bool, bool) {
 
     #[cfg(not(windows))]
     {
-        // On Unix, check if running as root
-        let has_root = unsafe { libc::geteuid() == 0 };
+        // On Unix, check if running as root using nix or std
+        use std::process::Command;
+        let output = Command::new("id").arg("-u").output();
+        let has_root = match output {
+            Ok(out) => {
+                String::from_utf8_lossy(&out.stdout).trim() == "0"
+            }
+            Err(_) => false,
+        };
         (has_root, false)
     }
 }

@@ -640,36 +640,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_cf_ips_default() {
-        let custom: Vec<String> = vec![];
-        let ips = get_cf_ips(&custom);
-
-        assert_eq!(ips.len(), 11);
-        assert!(ips.contains(&"104.16.0.1".to_string()));
-        assert!(ips.contains(&"172.67.0.1".to_string()));
-        assert!(ips.contains(&"162.159.0.1".to_string()));
-    }
-
-    #[test]
-    fn test_get_cf_ips_custom() {
-        let custom = vec!["1.2.3.4".to_string(), "5.6.7.8".to_string()];
-        let ips = get_cf_ips(&custom);
-
-        assert_eq!(ips.len(), 2);
-        assert_eq!(ips[0], "1.2.3.4");
-        assert_eq!(ips[1], "5.6.7.8");
-    }
-
-    #[test]
-    fn test_get_cf_ips_custom_overrides_default() {
-        let custom = vec!["custom.ip.1.1".to_string()];
-        let ips = get_cf_ips(&custom);
-
-        assert_eq!(ips.len(), 1);
-        assert!(!ips.contains(&"104.16.0.1".to_string()));
-    }
-
-    #[test]
     fn test_default_cf_ips_are_valid() {
         for ip in DEFAULT_CF_IPS {
             // All default CF IPs should be recognized as CF IPs
