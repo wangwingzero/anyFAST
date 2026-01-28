@@ -12,6 +12,14 @@ type View = 'dashboard' | 'settings' | 'logs' | 'history'
 
 let toastIdCounter = 0
 
+// 检查是否是权限错误
+const isPermissionError = (error: unknown): boolean => {
+  const errorStr = String(error).toLowerCase()
+  return errorStr.includes('permission denied') || 
+         errorStr.includes('access denied') ||
+         errorStr.includes('administrator')
+}
+
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard')
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
@@ -22,6 +30,7 @@ function App() {
   const [bindingCount, setBindingCount] = useState(0)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [toasts, setToasts] = useState<ToastData[]>([])
+  const [showAdminDialog, setShowAdminDialog] = useState(false)
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastIdCounter
@@ -30,6 +39,25 @@ function App() {
 
   const removeToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [])
+
+  // 处理权限错误，提示用户重启为管理员
+  const handlePermissionError = useCallback((error: unknown) => {
+    if (isPermissionError(error)) {
+      setShowAdminDialog(true)
+      return true
+    }
+    return false
+  }, [])
+
+  // 以管理员身份重启
+  const restartAsAdmin = useCallback(async () => {
+    try {
+      await invoke('restart_as_admin')
+    } catch {
+      // 用户取消或出错
+      setShowAdminDialog(false)
+    }
   }, [])
 
   // 添加日志
@@ -146,9 +174,13 @@ function App() {
       showToast('success', `已绑定 ${result.endpoint.name}`)
     } catch (e) {
       console.error('Apply failed:', e)
-      setProgress({ ...progress, message: `绑定失败: ${e}` })
-      addLog('error', `绑定失败: ${e}`)
-      showToast('error', `绑定失败: ${e}`)
+      if (handlePermissionError(e)) {
+        addLog('error', `绑定失败: 需要管理员权限`)
+      } else {
+        setProgress({ ...progress, message: `绑定失败: ${e}` })
+        addLog('error', `绑定失败: ${e}`)
+        showToast('error', `绑定失败: ${e}`)
+      }
     }
   }
 
@@ -161,9 +193,13 @@ function App() {
       showToast('success', `已成功绑定 ${count} 个端点`)
     } catch (e) {
       console.error('Apply all failed:', e)
-      setProgress({ ...progress, message: `绑定失败: ${e}` })
-      addLog('error', `一键应用失败: ${e}`)
-      showToast('error', `一键应用失败: ${e}`)
+      if (handlePermissionError(e)) {
+        addLog('error', `一键应用失败: 需要管理员权限`)
+      } else {
+        setProgress({ ...progress, message: `绑定失败: ${e}` })
+        addLog('error', `一键应用失败: ${e}`)
+        showToast('error', `一键应用失败: ${e}`)
+      }
     }
   }
 
@@ -176,9 +212,13 @@ function App() {
       showToast('info', `已清除 ${count} 个绑定`)
     } catch (e) {
       console.error('Clear failed:', e)
-      setProgress({ ...progress, message: `清除失败: ${e}` })
-      addLog('error', `清除绑定失败: ${e}`)
-      showToast('error', `清除失败: ${e}`)
+      if (handlePermissionError(e)) {
+        addLog('error', `清除绑定失败: 需要管理员权限`)
+      } else {
+        setProgress({ ...progress, message: `清除失败: ${e}` })
+        addLog('error', `清除绑定失败: ${e}`)
+        showToast('error', `清除失败: ${e}`)
+      }
     }
   }
 
@@ -202,6 +242,42 @@ function App() {
     <div className="flex h-screen bg-[#F5F5F7]">
       {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />
+
+      {/* Admin Permission Dialog */}
+      {showAdminDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md mx-4 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center">
+                <svg className="w-6 h-6 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">需要管理员权限</h3>
+                <p className="text-sm text-gray-500">Service 连接失败，需要提升权限</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              修改 hosts 文件需要管理员权限。是否以管理员身份重新启动应用？
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowAdminDialog(false)}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={restartAsAdmin}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors"
+              >
+                以管理员身份重启
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sidebar */}
       <Sidebar currentView={currentView} onNavigate={setCurrentView} />

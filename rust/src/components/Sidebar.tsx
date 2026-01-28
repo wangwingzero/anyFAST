@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Activity, Settings, Zap, FileText, ShieldAlert, ShieldCheck, BarChart3, Server, RotateCcw } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Activity, Settings, Zap, FileText, ShieldAlert, ShieldCheck, BarChart3, Server, RotateCcw, RefreshCw } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { PermissionStatus } from '../types'
 
@@ -11,11 +11,25 @@ interface SidebarProps {
 export function Sidebar({ currentView, onNavigate }: SidebarProps) {
   const [permissionStatus, setPermissionStatus] = useState<PermissionStatus | null>(null)
   const [isRestarting, setIsRestarting] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const refreshPermissionStatus = useCallback(async () => {
+    setIsRefreshing(true)
+    try {
+      // 先刷新后端的 Service 状态缓存
+      await invoke('refresh_service_status')
+      // 然后获取最新的权限状态
+      const status = await invoke<PermissionStatus>('get_permission_status')
+      setPermissionStatus(status)
+    } catch {
+      setPermissionStatus({ hasPermission: false, isUsingService: false })
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [])
 
   useEffect(() => {
-    invoke<PermissionStatus>('get_permission_status')
-      .then(setPermissionStatus)
-      .catch(() => setPermissionStatus({ hasPermission: false, isUsingService: false }))
+    refreshPermissionStatus()
   }, [])
 
   const handleRestartAsAdmin = async () => {
@@ -81,9 +95,17 @@ export function Sidebar({ currentView, onNavigate }: SidebarProps) {
           </div>
         ) : permissionStatus.hasPermission ? (
           permissionStatus.isUsingService ? (
-            <div className="flex items-center justify-center lg:justify-start gap-2 text-xs text-blue-600" title="Service 模式">
+            <div className="flex items-center justify-center lg:justify-start gap-2 text-xs text-blue-600" title="Service 模式 - 点击刷新状态">
               <Server className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
               <span className="hidden lg:inline">Service 模式</span>
+              <button
+                onClick={refreshPermissionStatus}
+                disabled={isRefreshing}
+                className="ml-auto p-1 hover:bg-blue-100 rounded transition-colors"
+                title="刷新状态"
+              >
+                <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </button>
             </div>
           ) : (
             <div className="flex items-center justify-center lg:justify-start gap-2 text-xs text-apple-green" title="管理员模式">

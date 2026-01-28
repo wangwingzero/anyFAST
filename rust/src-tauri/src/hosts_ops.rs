@@ -34,8 +34,12 @@ pub fn is_service_running() -> bool {
 pub fn refresh_service_status() -> bool {
     let client = PipeClient::new();
     let running = client.is_service_running();
+    // 更新缓存状态
     if let Some(available) = SERVICE_AVAILABLE.get() {
         available.store(running, Ordering::Relaxed);
+    } else {
+        // 如果还没初始化，初始化它
+        SERVICE_AVAILABLE.get_or_init(|| AtomicBool::new(running));
     }
     running
 }
@@ -72,6 +76,8 @@ pub fn write_binding(domain: &str, ip: &str) -> Result<(), HostsError> {
     }
 
     // Fall back to direct operation
+    // If this also fails with PermissionDenied, the error will propagate up
+    // and the frontend should prompt for admin restart
     HostsManager::write_binding(domain, ip)
 }
 

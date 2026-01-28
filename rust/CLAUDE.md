@@ -6,6 +6,14 @@
 
 ## 变更记录 (Changelog)
 
+### 2026-01-28 13:16:12
+- **文档同步更新**
+  - 确认 Tauri Commands 实际数量为 24 个
+  - 补充更新检查命令: `check_for_update`, `get_current_version`
+  - 补充权限提升命令: `restart_as_admin`
+  - 补充 Service RPC 方法说明
+  - 新增 UpdateInfo/PermissionStatus 数据模型说明
+
 ### 2026-01-28 08:00:00
 - **新增 Windows Service 架构**
   - 添加 `anyfast-service` Windows 服务可执行文件
@@ -14,7 +22,7 @@
   - 新增 `hosts_ops.rs`：自动切换 Service/直接操作
   - 更新 app.manifest：从 requireAdministrator 改为 asInvoker
   - 新增 NSIS 安装钩子：自动注册/卸载 Service
-  - 更新 Tauri Commands 至 21 个
+  - 更新 Tauri Commands 至 24 个
   - Sidebar 显示 Service 模式状态
 
 ### 2026-01-28 06:48:54
@@ -55,7 +63,7 @@ npm run tauri build
 2. `lib.rs` 初始化 Tauri Builder，注册 shell 插件
 3. 设置 `AppState`（ConfigManager, HistoryManager, HealthChecker, 测试结果缓存）
 4. 创建系统托盘菜单（显示窗口/退出）
-5. 注册所有 `#[tauri::command]` 命令（21 个）
+5. 注册所有 `#[tauri::command]` 命令（24 个）
 6. 如果配置为自动模式，延迟 2 秒启动健康检查
 7. 创建 960x640 窗口，加载前端
 
@@ -105,6 +113,17 @@ npm run tauri build
 | `stop_auto_mode` | - | - | 停止自动模式 |
 | `get_auto_mode_status` | - | `HealthStatus` | 获取自动模式状态 |
 | `is_auto_mode_running` | - | `bool` | 检查自动模式是否运行中 |
+
+#### 更新检查
+| 命令 | 参数 | 返回值 | 说明 |
+|------|------|--------|------|
+| `check_for_update` | - | `UpdateInfo` | 检查 GitHub 最新版本 |
+| `get_current_version` | - | `String` | 获取当前版本号 |
+
+#### 权限管理
+| 命令 | 参数 | 返回值 | 说明 |
+|------|------|--------|------|
+| `restart_as_admin` | - | - | 以管理员权限重启（Windows） |
 
 ### 使用示例
 ```typescript
@@ -234,6 +253,26 @@ pub struct AppConfig {
 }
 ```
 
+### UpdateInfo
+```rust
+pub struct UpdateInfo {
+    pub current_version: String,   // 当前版本
+    pub latest_version: String,    // 最新版本
+    pub has_update: bool,          // 是否有更新
+    pub release_url: String,       // Release 页面 URL
+    pub release_notes: String,     // 更新说明
+    pub published_at: String,      // 发布时间
+}
+```
+
+### PermissionStatus
+```rust
+pub struct PermissionStatus {
+    pub has_permission: bool,      // 是否有写入权限
+    pub is_using_service: bool,    // 是否通过 Service
+}
+```
+
 ### HistoryRecord / HistoryStats
 ```rust
 pub struct HistoryRecord {
@@ -323,6 +362,26 @@ interface AppConfig {
 - **自动清理**: 保留 7 天（HISTORY_RETENTION_DAYS）
 - **统计功能**: 支持按时间段（1h/24h/7d）获取统计数据
 - **记录上限**: 返回最多 100 条最近记录
+
+### hosts_ops.rs
+- **统一接口**: 自动检测 Service 可用性，fallback 到直接操作
+- **缓存状态**: 使用 `OnceLock<AtomicBool>` 缓存 Service 运行状态
+- **自动降级**: Service 调用失败时自动标记不可用，切换到直接操作
+- **权限检测**: `get_permission_status()` 返回 `(has_permission, is_using_service)`
+
+### service/ 模块 (Windows only)
+- **rpc.rs**: JSON-RPC 2.0 协议定义
+  - 请求/响应类型、错误码、方法名常量
+  - 支持方法: ping, write_binding, write_bindings_batch, clear_binding, clear_bindings_batch, read_binding, get_all_bindings, flush_dns
+- **pipe_server.rs**: Named Pipe 服务端
+  - Pipe 名称: `\\.\pipe\anyfast-hosts-service`
+  - 以 SYSTEM 权限运行，处理来自 GUI 的请求
+
+### client/ 模块 (Windows only)
+- **pipe_client.rs**: Named Pipe 客户端
+  - 连接超时: 5000ms
+  - 自动生成请求 ID
+  - 错误类型: ServiceNotRunning, ConnectionTimeout, Rpc, Io
 
 ### config.rs
 - **存储**: 使用 `directories` crate 获取跨平台配置目录
@@ -456,11 +515,21 @@ rust/
     ├── capabilities/          # Tauri v2 能力配置
     └── src/
         ├── main.rs            # Rust 入口
-        ├── lib.rs             # Tauri 命令注册（18 个命令）
+        ├── lib.rs             # Tauri 命令注册（24 个命令）
         ├── models.rs          # 数据模型 + 单元测试
         ├── config.rs          # 配置管理器 + 测试
         ├── endpoint_tester.rs # 端点测试器（CF 优选）+ 测试
         ├── hosts_manager.rs   # hosts 文件管理 + 测试
         ├── health_checker.rs  # 自动模式健康检查
-        └── history.rs         # 历史记录管理
+        ├── history.rs         # 历史记录管理
+        ├── hosts_ops.rs       # hosts 操作包装器 (Service/直接 自动切换)
+        ├── service/           # Windows Service 模块
+        │   ├── mod.rs
+        │   ├── rpc.rs         # JSON-RPC 2.0 协议定义
+        │   └── pipe_server.rs # Named Pipe 服务端
+        ├── client/            # Pipe 客户端模块
+        │   ├── mod.rs
+        │   └── pipe_client.rs # Named Pipe 客户端
+        └── bin/
+            └── anyfast-service.rs # Service 可执行文件入口
 ```

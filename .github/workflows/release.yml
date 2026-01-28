@@ -93,10 +93,11 @@ jobs:
       - name: Build Windows Service (Windows only)
         if: matrix.os == 'windows-latest'
         working-directory: rust/src-tauri
+        shell: pwsh
         run: |
           cargo build --release --bin anyfast-service
-          mkdir -p binaries
-          cp target/release/anyfast-service.exe binaries/anyfast-service-x86_64-pc-windows-msvc.exe
+          New-Item -ItemType Directory -Path binaries -Force | Out-Null
+          Copy-Item target/release/anyfast-service.exe binaries/anyfast-service-x86_64-pc-windows-msvc.exe
 
       - name: Configure Windows resources (Windows only)
         if: matrix.os == 'windows-latest'

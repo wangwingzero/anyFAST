@@ -4,6 +4,12 @@
 
 ## 变更记录 (Changelog)
 
+### 2026-01-28 13:16:12
+- **文档同步更新**：
+  - 确认 Tauri Commands 实际数量为 24 个
+  - 补充 `check_for_update`, `get_current_version`, `restart_as_admin` 命令说明
+  - 补充 Service 模块 RPC 方法说明
+
 ### 2026-01-28 07:50:00
 - **新增 Windows Service 架构**：
   - 添加独立的 `anyfast-service` Windows 服务，以 SYSTEM 权限管理 hosts 文件
@@ -15,7 +21,9 @@
   - 修改 `app.manifest`：从 `requireAdministrator` 改为 `asInvoker`
   - 新增 Tauri Commands: `is_service_running`, `get_permission_status`, `refresh_service_status`
   - Sidebar 显示 Service 模式/管理员模式状态
-- 更新 Tauri Commands 数量至 21 个
+- 新增更新检查命令: `check_for_update`, `get_current_version`
+- 新增权限提升命令: `restart_as_admin`
+- 更新 Tauri Commands 数量至 24 个
 
 ### 2026-01-28 06:48:54
 - 更新项目文档：移除不存在的 Python 版本引用
@@ -83,7 +91,7 @@ AnyRouter FAST 是一款面向需要访问中转站服务的用户设计的桌�
 [React 前端]
     |
     v (IPC - invoke)
-[Tauri Commands (21个)]
+[Tauri Commands (24个)]
     |
     +-- ConfigManager (配置持久化)
     +-- EndpointTester (端点测速 + CF优选)
@@ -271,6 +279,24 @@ cargo test
 | `stop_auto_mode` | - | - | 停止自动模式 |
 | `get_auto_mode_status` | - | `HealthStatus` | 获取自动模式状态 |
 | `is_auto_mode_running` | - | `bool` | 检查自动模式是否运行中 |
+| `check_for_update` | - | `UpdateInfo` | 检查 GitHub 是否有新版本 |
+| `get_current_version` | - | `String` | 获取当前应用版本号 |
+| `restart_as_admin` | - | - | 以管理员权限重启应用（Windows） |
+
+## Service RPC 方法
+
+Named Pipe 服务通过 JSON-RPC 2.0 协议通信，支持以下方法：
+
+| 方法 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `ping` | - | `{ pong, version }` | 健康检查 |
+| `write_binding` | `domain, ip` | `{ success }` | 写入单个绑定 |
+| `write_bindings_batch` | `bindings[]` | `{ count }` | 批量写入绑定 |
+| `clear_binding` | `domain` | `{ success }` | 清除单个绑定 |
+| `clear_bindings_batch` | `domains[]` | `{ count }` | 批量清除绑定 |
+| `read_binding` | `domain` | `{ ip? }` | 读取绑定 IP |
+| `get_all_bindings` | - | `{ bindings[] }` | 获取所有绑定 |
+| `flush_dns` | - | `{ success }` | 刷新 DNS 缓存 |
 
 ## 相关文件清单
 
@@ -326,11 +352,33 @@ rust/
         ├── history.rs         # 历史记录管理
         ├── service/           # Windows Service 模块
         │   ├── mod.rs
-        │   ├── rpc.rs         # JSON-RPC 协议定义
+        │   ├── rpc.rs         # JSON-RPC 2.0 协议定义
         │   └── pipe_server.rs # Named Pipe 服务端
         ├── client/            # Pipe 客户端模块
         │   ├── mod.rs
         │   └── pipe_client.rs # Named Pipe 客户端
         └── bin/
             └── anyfast-service.rs  # Service 可执行文件入口
+```
+
+## UpdateInfo 数据模型
+
+```rust
+pub struct UpdateInfo {
+    pub current_version: String,   // 当前版本 (1.0.0)
+    pub latest_version: String,    // 最新版本 (1.1.0)
+    pub has_update: bool,          // 是否有更新
+    pub release_url: String,       // GitHub Release 页面 URL
+    pub release_notes: String,     // 更新说明
+    pub published_at: String,      // 发布时间
+}
+```
+
+## PermissionStatus 数据模型
+
+```rust
+pub struct PermissionStatus {
+    pub has_permission: bool,     // 是否有写入 hosts 权限
+    pub is_using_service: bool,   // 是否通过 Service 获取权限
+}
 ```
