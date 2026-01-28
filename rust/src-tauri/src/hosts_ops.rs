@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use crate::client::PipeClient;
 
 /// Cached state of whether the service is running
+#[allow(dead_code)]
 static SERVICE_AVAILABLE: OnceLock<AtomicBool> = OnceLock::new();
 
 /// Check if the hosts service is running (cached)
@@ -50,6 +51,7 @@ pub fn refresh_service_status() -> bool {
 }
 
 /// Mark service as unavailable (called on service failure)
+#[allow(dead_code)]
 fn mark_service_unavailable() {
     if let Some(available) = SERVICE_AVAILABLE.get() {
         available.store(false, Ordering::Relaxed);
@@ -116,6 +118,7 @@ pub fn write_bindings_batch(bindings: &[HostsBinding]) -> Result<usize, HostsErr
 
 /// Clear a binding using Service if available, otherwise direct
 /// On service failure, automatically falls back to direct operation
+#[allow(dead_code)]
 pub fn clear_binding(domain: &str) -> Result<(), HostsError> {
     #[cfg(windows)]
     {
@@ -206,11 +209,7 @@ pub fn get_permission_status() -> (bool, bool) {
     {
         use std::fs::OpenOptions;
         let path = r"C:\Windows\System32\drivers\etc\hosts";
-        let has_admin = OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(path)
-            .is_ok();
+        let has_admin = OpenOptions::new().append(true).open(path).is_ok();
         (has_admin, false)
     }
 

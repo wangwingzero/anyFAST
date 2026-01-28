@@ -63,6 +63,7 @@ impl HistoryManager {
     }
 
     /// 添加一条历史记录
+    #[allow(dead_code)]
     pub fn add_record(&self, record: HistoryRecord) -> Result<(), HistoryError> {
         let mut records = self.load_records()?;
         records.push(record);
@@ -149,6 +150,7 @@ impl HistoryManager {
     }
 
     /// 清理过期记录
+    #[allow(dead_code)]
     pub fn clear_old(&self) -> Result<u32, HistoryError> {
         let records = self.load_records()?;
         let original_count = records.len();

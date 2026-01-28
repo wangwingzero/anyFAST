@@ -79,6 +79,7 @@ impl HealthChecker {
     }
 
     /// 设置基准延迟
+    #[allow(dead_code)]
     pub async fn set_baseline(&self, domain: &str, latency: f64) {
         let mut baselines = self.baselines.lock().await;
         baselines.insert(domain.to_string(), latency);
@@ -251,9 +252,8 @@ impl HealthChecker {
             };
 
             // 智能切换：如果最优 IP 与当前绑定不同，且延迟改善超过 20%，触发切换
-            if result.success && current_ip.is_some() {
-                let current = current_ip.as_ref().unwrap();
-                if current != &result.ip {
+            if let Some(current) = current_ip.as_ref() {
+                if result.success && current != &result.ip {
                     // 计算改善百分比（相对于基准延迟）
                     let improvement = if baseline > 0.0 {
                         (baseline - result.latency) / baseline * 100.0
@@ -261,10 +261,10 @@ impl HealthChecker {
                         0.0
                     };
                     // 如果改善超过 20%，触发切换
-                    if improvement > 20.0 {
-                        if !needs_switch.iter().any(|e| e.domain == endpoint.domain) {
-                            needs_switch.push(endpoint.clone());
-                        }
+                    if improvement > 20.0
+                        && !needs_switch.iter().any(|e| e.domain == endpoint.domain)
+                    {
+                        needs_switch.push(endpoint.clone());
                     }
                 }
             }

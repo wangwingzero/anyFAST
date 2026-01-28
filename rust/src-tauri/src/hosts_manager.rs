@@ -163,7 +163,7 @@ impl ParsedHosts {
         }
     }
 
-    fn to_string(&self) -> String {
+    fn render(&self) -> String {
         let mut lines = self.before_block.clone();
 
         // Add anyFAST block if there are bindings
@@ -315,7 +315,7 @@ impl HostsManager {
             .insert(domain.to_string(), ip.to_string());
 
         // Generate new content
-        let new_content = parsed.to_string();
+        let new_content = parsed.render();
 
         // Atomic write
         atomic_write(path, &new_content)?;
@@ -375,7 +375,7 @@ impl HostsManager {
         }
 
         // Generate new content
-        let new_content = parsed.to_string();
+        let new_content = parsed.render();
 
         // Atomic write
         atomic_write(path, &new_content)?;
@@ -385,12 +385,14 @@ impl HostsManager {
     }
 
     /// Clear binding for a domain
+    #[allow(dead_code)]
     pub fn clear_binding(domain: &str) -> Result<(), HostsError> {
         Self::clear_binding_from_path(Path::new(HOSTS_PATH), domain)
     }
 
     /// Internal: clear binding from custom path (for testing)
     /// Now uses file locking for safety
+    #[allow(dead_code)]
     fn clear_binding_from_path(path: &Path, domain: &str) -> Result<(), HostsError> {
         // Open file with exclusive lock for atomic read-modify-write
         let mut file = OpenOptions::new()
@@ -416,7 +418,7 @@ impl HostsManager {
         parsed.anyrouter_bindings.remove(domain);
 
         // Generate new content
-        let new_content = parsed.to_string();
+        let new_content = parsed.render();
 
         // Atomic write
         atomic_write(path, &new_content)?;
@@ -466,7 +468,7 @@ impl HostsManager {
         }
 
         // Generate new content
-        let new_content = parsed.to_string();
+        let new_content = parsed.render();
 
         // Atomic write
         atomic_write(path, &new_content)?;

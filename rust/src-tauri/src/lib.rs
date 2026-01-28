@@ -541,7 +541,7 @@ async fn restart_as_admin() -> Result<(), String> {
             // Exit current instance
             std::process::exit(0);
         } else {
-            return Err("用户取消了管理员权限请求".to_string());
+            Err("用户取消了管理员权限请求".to_string())
         }
     }
 

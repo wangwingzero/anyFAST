@@ -12,6 +12,7 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+    #[allow(dead_code)]
     #[error("Config directory not found")]
     NoDirs,
 }
@@ -79,10 +80,12 @@ mod tests {
         let config_path = temp_dir.path().join("config.json");
         let manager = ConfigManager::with_path(config_path);
 
-        let mut config = AppConfig::default();
-        config.mode = "manual".into();
-        config.check_interval = 60;
-        config.cloudflare_ips = vec!["1.2.3.4".into(), "5.6.7.8".into()];
+        let config = AppConfig {
+            mode: "manual".into(),
+            check_interval: 60,
+            cloudflare_ips: vec!["1.2.3.4".into(), "5.6.7.8".into()],
+            ..Default::default()
+        };
 
         manager.save(&config).unwrap();
         let loaded = manager.load().unwrap();
