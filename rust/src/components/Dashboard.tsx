@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Play, Square, CheckCircle2, Zap, Globe, Link2, Trash2, TrendingUp, TrendingDown, Minus, Plus, X } from 'lucide-react'
-import { Endpoint, EndpointResult, Progress } from '../types'
+import { Endpoint, EndpointResult, Progress, EndpointHealth } from '../types'
 
 interface DashboardProps {
   endpoints: Endpoint[]
@@ -8,6 +8,7 @@ interface DashboardProps {
   isRunning: boolean
   progress: Progress
   bindingCount: number
+  healthStatus?: EndpointHealth[]
   onStart: () => void
   onStop: () => void
   onApply: (result: EndpointResult) => void
@@ -23,6 +24,7 @@ export function Dashboard({
   isRunning,
   progress,
   bindingCount,
+  healthStatus,
   onStart,
   onStop,
   onApply,
@@ -76,30 +78,15 @@ export function Dashboard({
         <p className="text-sm text-apple-gray-400 mt-1">测试中转站端点延迟</p>
       </div>
 
-      {/* Status Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4 mb-4 lg:mb-6">
-        <StatusCard
-          icon={<Globe className="w-5 h-5" />}
-          label="已测端点"
-          value={testedCount}
-          color="blue"
-        />
-        <StatusCard
-          icon={<CheckCircle2 className="w-5 h-5" />}
-          label="可用端点"
-          value={availableCount}
-          color="green"
-        />
-        <StatusCard
-          icon={<Link2 className="w-5 h-5" />}
-          label="当前绑定"
-          value={bindingCount}
-          color="orange"
-        />
+      {/* Compact Status Bar */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <CompactStatus icon={<Globe className="w-4 h-4" />} label="已测" value={testedCount} color="blue" />
+        <CompactStatus icon={<CheckCircle2 className="w-4 h-4" />} label="可用" value={availableCount} color="green" />
+        <CompactStatus icon={<Link2 className="w-4 h-4" />} label="绑定" value={bindingCount} color="orange" />
       </div>
 
       {/* Endpoints Management */}
-      <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-3 lg:p-4 mb-4 lg:mb-6 shadow-sm border border-gray-100">
+      <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-3 mb-3 shadow-sm border border-gray-100">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-medium text-apple-gray-600">端点列表</h2>
           <div className="flex items-center gap-2">
@@ -186,7 +173,7 @@ export function Dashboard({
       </div>
 
       {/* Control Panel */}
-      <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-3 lg:p-4 mb-4 lg:mb-6 shadow-sm border border-gray-100">
+      <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-3 mb-3 shadow-sm border border-gray-100">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="w-full sm:w-auto">
             <p className="text-sm text-apple-gray-500">{progress.message}</p>
@@ -254,12 +241,14 @@ export function Dashboard({
           ) : (
             enabledEndpoints.map((endpoint, index) => {
               const result = results.find(r => r.endpoint.domain === endpoint.domain)
+              const health = healthStatus?.find(h => h.domain === endpoint.domain)
               return (
                 <ResultRow
                   key={endpoint.domain}
                   rank={index + 1}
                   endpoint={endpoint}
                   result={result}
+                  health={health}
                   onApply={result ? () => onApply(result) : undefined}
                 />
               )
@@ -291,7 +280,7 @@ export function Dashboard({
   )
 }
 
-function StatusCard({
+function CompactStatus({
   icon,
   label,
   value,
@@ -309,12 +298,14 @@ function StatusCard({
   }
 
   return (
-    <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-4 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colorMap[color]} mb-3`}>
+    <div className="flex items-center gap-2 px-3 py-1.5 bg-white/70 backdrop-blur-sm rounded-xl border border-gray-100">
+      <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${colorMap[color]}`}>
         {icon}
       </div>
-      <p className="text-xs text-apple-gray-400 mb-1">{label}</p>
-      <p className="text-2xl font-semibold text-apple-gray-600">{value}</p>
+      <div className="flex items-baseline gap-1">
+        <span className="text-lg font-semibold text-apple-gray-600">{value}</span>
+        <span className="text-xs text-apple-gray-400">{label}</span>
+      </div>
     </div>
   )
 }
@@ -323,15 +314,22 @@ function ResultRow({
   rank,
   endpoint,
   result,
+  health,
   onApply,
 }: {
   rank: number
   endpoint: Endpoint
   result?: EndpointResult
+  health?: EndpointHealth
   onApply?: () => void
 }) {
+  // 优先使用健康检查的最优 IP，否则使用测速结果
+  const displayIp = health?.best_ip || result?.ip || '-'
+  const displayLatency = health?.best_latency || result?.latency
+  const isLive = !!health?.best_ip  // 是否有实时数据
+
   // 未测试状态
-  if (!result) {
+  if (!result && !health) {
     return (
       <div
         className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_60px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_80px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 bg-apple-gray-50/50"
@@ -351,19 +349,20 @@ function ResultRow({
     )
   }
 
-  const latencyColor = result.success
-    ? result.latency < 200
+  const latency = displayLatency || 0
+  const latencyColor = latency > 0
+    ? latency < 200
       ? 'text-apple-green'
-      : result.latency < 500
+      : latency < 500
         ? 'text-apple-gray-600'
-        : result.latency < 1000
+        : latency < 1000
           ? 'text-apple-orange'
           : 'text-apple-red'
     : 'text-apple-red'
 
   // 加速效果显示
   const renderSpeedupBadge = () => {
-    if (!result.success) return null
+    if (!result?.success) return null
 
     // 如果没有原始延迟数据（旧数据兼容）
     if (!result.original_latency || result.original_latency <= 0) {
@@ -413,17 +412,18 @@ function ResultRow({
       <span className="text-xs lg:text-sm text-apple-gray-400 font-mono truncate">
         {endpoint.domain}
       </span>
-      <span className="text-xs lg:text-sm text-apple-gray-400 font-mono truncate">
-        {result.ip || '-'}
+      <span className={`text-xs lg:text-sm font-mono truncate ${isLive ? 'text-apple-blue' : 'text-apple-gray-400'}`} title={isLive ? '实时最优 IP' : '测速结果 IP'}>
+        {isLive && <span className="inline-block w-1.5 h-1.5 rounded-full bg-apple-green mr-1 animate-pulse" />}
+        {displayIp}
       </span>
       <span className={`text-xs lg:text-sm font-medium ${latencyColor}`}>
-        {result.success ? `${result.latency.toFixed(0)}ms` : result.error || '失败'}
+        {latency > 0 ? `${latency.toFixed(0)}ms` : (result?.error || '失败')}
       </span>
       <div className="hidden sm:block">
         {renderSpeedupBadge()}
       </div>
       <div>
-        {result.success && !result.use_original && onApply && (
+        {result?.success && !result.use_original && onApply && (
           <button
             onClick={onApply}
             className="px-2 lg:px-3 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-blue text-white hover:bg-apple-blue-hover"

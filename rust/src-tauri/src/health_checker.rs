@@ -30,6 +30,8 @@ pub struct HealthStatus {
 pub struct EndpointHealth {
     pub domain: String,
     pub current_ip: Option<String>,
+    pub best_ip: Option<String>,        // 当前最优 IP
+    pub best_latency: f64,              // 最优 IP 的延迟
     pub latency: f64,
     pub baseline_latency: f64,
     pub consecutive_failures: u32,
@@ -210,7 +212,7 @@ impl HealthChecker {
             // 获取当前绑定的 IP
             let current_ip = hosts_ops::read_binding(&endpoint.domain);
 
-            // 测试当前端点
+            // 测试端点（会测试所有 Cloudflare IP 并返回最优结果）
             let result = tester.test_endpoint(endpoint).await;
 
             // 获取基准延迟
@@ -219,7 +221,7 @@ impl HealthChecker {
                 b.get(&endpoint.domain).copied().unwrap_or(result.latency)
             };
 
-            // 判断是否健康
+            // 判断是否健康（基于当前绑定的 IP）
             let is_healthy = if result.success {
                 // 检查是否比基准慢超过阈值
                 let slow_ratio = if baseline > 0.0 {
@@ -249,9 +251,37 @@ impl HealthChecker {
                 }
             }
 
+            // 最优 IP 信息（来自测试结果）
+            let (best_ip, best_latency) = if result.success {
+                (Some(result.ip.clone()), result.latency)
+            } else {
+                (None, 0.0)
+            };
+
+            // 智能切换：如果最优 IP 与当前绑定不同，且延迟改善超过 20%，触发切换
+            if result.success && current_ip.is_some() {
+                let current = current_ip.as_ref().unwrap();
+                if current != &result.ip {
+                    // 计算改善百分比（相对于基准延迟）
+                    let improvement = if baseline > 0.0 {
+                        (baseline - result.latency) / baseline * 100.0
+                    } else {
+                        0.0
+                    };
+                    // 如果改善超过 20%，触发切换
+                    if improvement > 20.0 {
+                        if !needs_switch.iter().any(|e| e.domain == endpoint.domain) {
+                            needs_switch.push(endpoint.clone());
+                        }
+                    }
+                }
+            }
+
             endpoints_health.push(EndpointHealth {
                 domain: endpoint.domain.clone(),
                 current_ip,
+                best_ip,
+                best_latency,
                 latency: result.latency,
                 baseline_latency: baseline,
                 consecutive_failures: {

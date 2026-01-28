@@ -74,6 +74,8 @@ export interface HealthStatus {
 export interface EndpointHealth {
   domain: string
   current_ip: string | null
+  best_ip: string | null       // 当前最优 IP
+  best_latency: number         // 最优 IP 的延迟
   latency: number
   baseline_latency: number
   consecutive_failures: number

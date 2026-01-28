@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { Sidebar } from './components/Sidebar'
 import { Dashboard } from './components/Dashboard'
 import { Settings } from './components/Settings'
 import { Logs } from './components/Logs'
 import { HistoryView } from './components/HistoryView'
 import { ToastContainer, ToastData, ToastType } from './components'
-import { Endpoint, EndpointResult, AppConfig, LogEntry } from './types'
+import { Endpoint, EndpointResult, AppConfig, LogEntry, EndpointHealth } from './types'
 
 type View = 'dashboard' | 'settings' | 'logs' | 'history'
 
@@ -31,6 +32,7 @@ function App() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [toasts, setToasts] = useState<ToastData[]>([])
   const [showAdminDialog, setShowAdminDialog] = useState(false)
+  const [healthStatus, setHealthStatus] = useState<EndpointHealth[]>([])
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastIdCounter
@@ -83,6 +85,15 @@ function App() {
   useEffect(() => {
     loadConfig()
     refreshBindingCount()
+
+    // 监听健康检查结果事件
+    const unlistenHealth = listen<{ endpoints_health: EndpointHealth[] }>('health-check-result', (event) => {
+      setHealthStatus(event.payload.endpoints_health)
+    })
+
+    return () => {
+      unlistenHealth.then(fn => fn())
+    }
   }, [])
 
   const loadConfig = async () => {
@@ -291,6 +302,7 @@ function App() {
             isRunning={isRunning}
             progress={progress}
             bindingCount={bindingCount}
+            healthStatus={healthStatus}
             onStart={startTest}
             onStop={stopTest}
             onApply={applyEndpoint}
