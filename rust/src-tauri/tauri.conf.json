@@ -31,7 +31,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
+    "createUpdaterArtifacts": true,
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -45,13 +46,20 @@
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "installMode": "perMachine",
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerHooks": "nsis/hooks.nsi"
       }
     }
   },
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCQkZDRUIxNDY4QUIwOTYKUldTV3NJcEdzYzYvV3p6OHRBN3lrOFNLaGFpeXMwRVorK25NREFLa0duR1BEUWRLYmVUcWF0RlIK",
+      "endpoints": [
+        "https://github.com/wangwingzero/anyFAST/releases/latest/download/latest.json"
+      ]
     }
   }
 }

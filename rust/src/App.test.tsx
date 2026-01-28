@@ -49,6 +49,8 @@ describe('App', () => {
           return 0
         case 'check_admin':
           return true
+        case 'get_permission_status':
+          return { hasPermission: true, isUsingService: false }
         case 'start_speed_test':
           return mockResults
         case 'apply_all_endpoints':
@@ -109,7 +111,7 @@ describe('App', () => {
     fireEvent.click(settingsNav)
 
     await waitFor(() => {
-      expect(screen.getByText('配置端点和运行参数')).toBeInTheDocument()
+      expect(screen.getByText('配置运行参数')).toBeInTheDocument()
     })
   })
 
@@ -219,6 +221,9 @@ describe('App', () => {
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'get_config') {
         throw new Error('Config load failed')
+      }
+      if (cmd === 'get_permission_status') {
+        return { hasPermission: true, isUsingService: false }
       }
       return undefined
     })

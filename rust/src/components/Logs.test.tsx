@@ -86,7 +86,7 @@ describe('Logs', () => {
   it('disables clear button when logs are empty', () => {
     render(<Logs logs={[]} onClear={mockOnClear} />)
 
-    const clearButton = screen.getByText('清空日志')
+    const clearButton = screen.getByText('清空日志').closest('button')
     expect(clearButton).toBeDisabled()
   })
 

@@ -3,7 +3,8 @@
 
 use crate::config::ConfigManager;
 use crate::endpoint_tester::EndpointTester;
-use crate::hosts_manager::{HostsBinding, HostsManager};
+use crate::hosts_manager::HostsBinding;
+use crate::hosts_ops;
 use crate::models::{AppConfig, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -207,7 +208,7 @@ impl HealthChecker {
 
         for endpoint in endpoints {
             // 获取当前绑定的 IP
-            let current_ip = HostsManager::read_binding(&endpoint.domain);
+            let current_ip = hosts_ops::read_binding(&endpoint.domain);
 
             // 测试当前端点
             let result = tester.test_endpoint(endpoint).await;
@@ -275,19 +276,24 @@ impl HealthChecker {
         _config_manager: &ConfigManager,
     ) -> SwitchResult {
         let tester = EndpointTester::new(cloudflare_ips.to_vec());
-        let mut switched = Vec::new();
-        let mut bindings = Vec::new();
+
+        // 准备阶段：收集测试结果
+        struct PendingSwitch {
+            domain: String,
+            old_ip: Option<String>,
+            new_ip: String,
+            new_latency: f64,
+        }
+        let mut pending_switches: Vec<PendingSwitch> = Vec::new();
+        let mut bindings: Vec<HostsBinding> = Vec::new();
 
         for endpoint in endpoints {
             // 重新测试找最优 IP
             let result = tester.test_endpoint(endpoint).await;
 
             if result.success {
-                // 更新基准延迟
-                {
-                    let mut b = baselines.lock().await;
-                    b.insert(endpoint.domain.clone(), result.latency);
-                }
+                // 记录旧 IP（在写入前读取）
+                let old_ip = hosts_ops::read_binding(&endpoint.domain);
 
                 // 添加绑定
                 bindings.push(HostsBinding {
@@ -295,27 +301,60 @@ impl HealthChecker {
                     ip: result.ip.clone(),
                 });
 
-                switched.push(SwitchedEndpoint {
+                pending_switches.push(PendingSwitch {
                     domain: endpoint.domain.clone(),
-                    old_ip: HostsManager::read_binding(&endpoint.domain),
+                    old_ip,
                     new_ip: result.ip,
                     new_latency: result.latency,
                 });
             }
         }
 
-        // 批量写入
-        if !bindings.is_empty() {
-            if let Err(e) = HostsManager::write_bindings_batch(&bindings) {
-                eprintln!("Failed to write bindings: {}", e);
-            } else {
-                let _ = HostsManager::flush_dns();
-            }
+        // 批量写入 - 只有写入成功才报告切换成功
+        if bindings.is_empty() {
+            return SwitchResult {
+                switched_count: 0,
+                switched: Vec::new(),
+            };
         }
 
-        SwitchResult {
-            switched_count: switched.len() as u32,
-            switched,
+        match hosts_ops::write_bindings_batch(&bindings) {
+            Ok(_) => {
+                // 写入成功，刷新 DNS
+                let _ = hosts_ops::flush_dns();
+
+                // 更新基准延迟（只有写入成功才更新）
+                {
+                    let mut b = baselines.lock().await;
+                    for ps in &pending_switches {
+                        b.insert(ps.domain.clone(), ps.new_latency);
+                    }
+                }
+
+                // 构建成功结果
+                let switched: Vec<SwitchedEndpoint> = pending_switches
+                    .into_iter()
+                    .map(|ps| SwitchedEndpoint {
+                        domain: ps.domain,
+                        old_ip: ps.old_ip,
+                        new_ip: ps.new_ip,
+                        new_latency: ps.new_latency,
+                    })
+                    .collect();
+
+                SwitchResult {
+                    switched_count: switched.len() as u32,
+                    switched,
+                }
+            }
+            Err(e) => {
+                // 写入失败，记录错误并返回空结果
+                eprintln!("Failed to write bindings: {}", e);
+                SwitchResult {
+                    switched_count: 0,
+                    switched: Vec::new(),
+                }
+            }
         }
     }
 }

@@ -182,8 +182,24 @@ function App() {
     }
   }
 
+  // 保存配置（用于仪表盘端点管理）
+  const saveConfigWithEndpoints = async (newEndpoints: Endpoint[]) => {
+    if (!config) return
+    const newConfig = { ...config, endpoints: newEndpoints }
+    try {
+      await invoke('save_config', { config: newConfig })
+      setConfig(newConfig)
+      await refreshBindingCount()
+      addLog('info', '端点配置已保存')
+    } catch (e) {
+      console.error('Save config failed:', e)
+      addLog('error', `保存配置失败: ${e}`)
+      showToast('error', `保存失败: ${e}`)
+    }
+  }
+
   return (
-    <div className="flex h-screen bg-apple-gray-100">
+    <div className="flex h-screen bg-[#F5F5F7]">
       {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />
 
@@ -191,7 +207,7 @@ function App() {
       <Sidebar currentView={currentView} onNavigate={setCurrentView} />
 
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-auto min-w-0">
         {currentView === 'dashboard' && (
           <Dashboard
             endpoints={endpoints}
@@ -204,6 +220,8 @@ function App() {
             onApply={applyEndpoint}
             onApplyAll={applyAll}
             onClearBindings={clearBindings}
+            onEndpointsChange={setEndpoints}
+            onSaveConfig={saveConfigWithEndpoints}
           />
         )}
         {currentView === 'history' && <HistoryView />}

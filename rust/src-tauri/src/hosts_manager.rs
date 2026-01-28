@@ -1,8 +1,15 @@
 //! Windows hosts file manager
+//!
+//! Features:
+//! - Block-based management with BEGIN/END markers
+//! - Atomic file writes using temp file + fsync + rename
+//! - Exclusive file locking for concurrent access safety
+//! - UTF-8 BOM handling
 
 use fs2::FileExt;
-use std::fs;
-use std::io::{Read as IoRead, Seek, SeekFrom, Write};
+use std::collections::HashSet;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read as IoRead, Write};
 use std::net::IpAddr;
 use std::path::Path;
 use thiserror::Error;
@@ -13,7 +20,10 @@ const HOSTS_PATH: &str = r"C:\Windows\System32\drivers\etc\hosts";
 #[cfg(not(windows))]
 const HOSTS_PATH: &str = "/etc/hosts";
 
-const MARKER: &str = "# AnyRouter";
+// Block markers for identifying anyFAST-managed entries
+const MARKER_BEGIN: &str = "# BEGIN anyFAST";
+const MARKER_END: &str = "# END anyFAST";
+const MARKER_LINE: &str = "# anyFAST";
 
 #[derive(Error, Debug)]
 pub enum HostsError {
@@ -46,10 +56,10 @@ fn validate_domain(domain: &str) -> Result<(), HostsError> {
             domain
         )));
     }
-    // Basic hostname validation: only alphanumeric, hyphens, dots
+    // Basic hostname validation: only alphanumeric, hyphens, dots, underscores
     if !domain
         .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '.')
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '.' || c == '_')
     {
         return Err(HostsError::InvalidDomain(format!(
             "invalid hostname format: {}",
@@ -65,6 +75,174 @@ pub struct HostsBinding {
     pub ip: String,
 }
 
+/// Internal structure to hold parsed hosts file content
+struct ParsedHosts {
+    /// Lines before the anyFAST block
+    before_block: Vec<String>,
+    /// Lines after the anyFAST block
+    after_block: Vec<String>,
+    /// Current anyFAST bindings (domain -> ip)
+    anyrouter_bindings: std::collections::HashMap<String, String>,
+}
+
+impl ParsedHosts {
+    fn parse(content: &str) -> Self {
+        let mut before_block = Vec::new();
+        let mut after_block = Vec::new();
+        let mut anyrouter_bindings = std::collections::HashMap::new();
+
+        let mut in_block = false;
+        let mut found_block = false;
+        // Track lines seen while in_block in case END marker is missing
+        let mut unclosed_block_lines = Vec::new();
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+
+            if trimmed == MARKER_BEGIN {
+                in_block = true;
+                found_block = true;
+                continue;
+            }
+
+            if trimmed == MARKER_END {
+                in_block = false;
+                continue;
+            }
+
+            if in_block {
+                // Parse binding inside the block
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        anyrouter_bindings.insert(parts[1].to_string(), parts[0].to_string());
+                    }
+                }
+                // Track raw lines in case block is unclosed
+                unclosed_block_lines.push(line.to_string());
+            } else if found_block {
+                after_block.push(line.to_string());
+            } else {
+                // Also check for legacy line-level markers (for backward compatibility)
+                if trimmed.contains(MARKER_LINE) && !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        anyrouter_bindings.insert(parts[1].to_string(), parts[0].to_string());
+                    }
+                } else {
+                    before_block.push(line.to_string());
+                }
+            }
+        }
+
+        // Handle unclosed block: if END marker is missing, preserve trailing content
+        // that wasn't valid bindings (e.g., user comments added after BEGIN)
+        if in_block && !unclosed_block_lines.is_empty() {
+            // Lines that weren't parsed as bindings should be preserved in after_block
+            // This prevents data loss when END marker is accidentally deleted
+            for line in unclosed_block_lines {
+                let trimmed = line.trim();
+                // Skip lines that were already parsed as bindings
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    after_block.push(line);
+                } else {
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    // If it doesn't look like a binding, preserve it
+                    if parts.len() < 2 || parts[0].parse::<IpAddr>().is_err() {
+                        after_block.push(line);
+                    }
+                }
+            }
+        }
+
+        ParsedHosts {
+            before_block,
+            after_block,
+            anyrouter_bindings,
+        }
+    }
+
+    fn to_string(&self) -> String {
+        let mut lines = self.before_block.clone();
+
+        // Add anyFAST block if there are bindings
+        if !self.anyrouter_bindings.is_empty() {
+            // Ensure there's a blank line before the block
+            if !lines.is_empty() && !lines.last().map(|l| l.is_empty()).unwrap_or(true) {
+                lines.push(String::new());
+            }
+
+            lines.push(MARKER_BEGIN.to_string());
+
+            // Sort bindings by domain for consistent output
+            let mut sorted_bindings: Vec<_> = self.anyrouter_bindings.iter().collect();
+            sorted_bindings.sort_by_key(|(domain, _)| *domain);
+
+            for (domain, ip) in sorted_bindings {
+                lines.push(format!("{}\t{}\t{}", ip, domain, MARKER_LINE));
+            }
+
+            lines.push(MARKER_END.to_string());
+        }
+
+        // Add lines after the block
+        lines.extend(self.after_block.clone());
+
+        // Join with newlines
+        lines.join("\n")
+    }
+}
+
+/// Read file content handling UTF-8 BOM
+fn read_hosts_content(file: &mut File) -> Result<String, HostsError> {
+    let mut raw_content = Vec::new();
+    file.read_to_end(&mut raw_content).map_err(HostsError::Io)?;
+
+    let content = if raw_content.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        String::from_utf8_lossy(&raw_content[3..]).to_string()
+    } else {
+        String::from_utf8_lossy(&raw_content).to_string()
+    };
+
+    Ok(content)
+}
+
+/// Atomic write: write to temp file, fsync, then rename
+fn atomic_write(path: &Path, content: &str) -> Result<(), HostsError> {
+    // Create temp file in the same directory (required for atomic rename)
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let temp_path = parent.join(format!(".hosts.tmp.{}", std::process::id()));
+
+    // Write to temp file
+    {
+        let mut temp_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temp_path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    HostsError::PermissionDenied
+                } else {
+                    HostsError::Io(e)
+                }
+            })?;
+
+        temp_file.write_all(content.as_bytes())?;
+        temp_file.flush()?;
+        temp_file.sync_all()?;  // fsync to ensure data is on disk
+    }
+
+    // Atomic rename
+    fs::rename(&temp_path, path).map_err(|e| {
+        // Clean up temp file on failure
+        let _ = fs::remove_file(&temp_path);
+        HostsError::Io(e)
+    })?;
+
+    Ok(())
+}
+
 pub struct HostsManager;
 
 impl HostsManager {
@@ -76,7 +254,14 @@ impl HostsManager {
     /// Internal: read binding from custom path (for testing)
     fn read_binding_from_path(path: &Path, domain: &str) -> Option<String> {
         let content = fs::read_to_string(path).ok()?;
+        let parsed = ParsedHosts::parse(&content);
 
+        // First check anyFAST bindings
+        if let Some(ip) = parsed.anyrouter_bindings.get(domain) {
+            return Some(ip.clone());
+        }
+
+        // Fall back to checking all lines (for non-anyFAST entries)
         for line in content.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -104,7 +289,7 @@ impl HostsManager {
         validate_domain(domain)?;
 
         // Open file with exclusive lock for atomic read-modify-write
-        let mut file = fs::OpenOptions::new()
+        let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(path)
@@ -119,55 +304,18 @@ impl HostsManager {
         // Acquire exclusive lock (blocks until available)
         file.lock_exclusive().map_err(HostsError::Io)?;
 
-        // Read existing content using the locked file handle (not reopening!)
-        let mut raw_content = Vec::new();
-        file.read_to_end(&mut raw_content).map_err(HostsError::Io)?;
+        // Read and parse existing content
+        let content = read_hosts_content(&mut file)?;
+        let mut parsed = ParsedHosts::parse(&content);
 
-        let content = if raw_content.starts_with(&[0xEF, 0xBB, 0xBF]) {
-            String::from_utf8_lossy(&raw_content[3..]).to_string()
-        } else {
-            String::from_utf8_lossy(&raw_content).to_string()
-        };
+        // Update or add binding
+        parsed.anyrouter_bindings.insert(domain.to_string(), ip.to_string());
 
-        let mut lines: Vec<String> = Vec::new();
-        let mut found = false;
+        // Generate new content
+        let new_content = parsed.to_string();
 
-        for line in content.lines() {
-            let trimmed = line.trim();
-
-            // Check if this line is for our domain
-            if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 && parts[1] == domain {
-                    // Update existing entry
-                    lines.push(format!("{}\t{}\t{}", ip, domain, MARKER));
-                    found = true;
-                    continue;
-                }
-            }
-
-            lines.push(line.to_string());
-        }
-
-        // Add new entry if not found
-        if !found {
-            // Ensure there's a newline before our entry
-            if !lines.is_empty() && !lines.last().unwrap().is_empty() {
-                lines.push(String::new());
-            }
-            lines.push(format!("{}\t{}\t{}", ip, domain, MARKER));
-        }
-
-        // Write back (reuse the locked file handle)
-        file.set_len(0).map_err(HostsError::Io)?;
-        file.seek(SeekFrom::Start(0)).map_err(HostsError::Io)?;
-
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                writeln!(file)?;
-            }
-            write!(file, "{}", line)?;
-        }
+        // Atomic write
+        atomic_write(path, &new_content)?;
 
         // Lock is automatically released when file is dropped
         Ok(())
@@ -192,7 +340,7 @@ impl HostsManager {
         }
 
         // Open file with exclusive lock for atomic read-modify-write
-        let mut file = fs::OpenOptions::new()
+        let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(path)
@@ -207,59 +355,22 @@ impl HostsManager {
         // Acquire exclusive lock (blocks until available)
         file.lock_exclusive().map_err(HostsError::Io)?;
 
-        // Read existing content using the locked file handle (not reopening!)
-        let mut raw_content = Vec::new();
-        file.read_to_end(&mut raw_content).map_err(HostsError::Io)?;
+        // Read and parse existing content
+        let content = read_hosts_content(&mut file)?;
+        let mut parsed = ParsedHosts::parse(&content);
 
-        let content = if raw_content.starts_with(&[0xEF, 0xBB, 0xBF]) {
-            String::from_utf8_lossy(&raw_content[3..]).to_string()
-        } else {
-            String::from_utf8_lossy(&raw_content).to_string()
-        };
-
-        // Build a set of domains to update
-        let domains_to_update: std::collections::HashSet<&str> =
-            bindings.iter().map(|b| b.domain.as_str()).collect();
-
-        let mut lines: Vec<String> = Vec::new();
+        // Update bindings
         let mut updated_count = 0;
-
-        for line in content.lines() {
-            let trimmed = line.trim();
-
-            // Check if this line is for one of our domains
-            if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 && domains_to_update.contains(parts[1]) {
-                    // Skip this line - we'll add updated entries at the end
-                    continue;
-                }
-            }
-
-            lines.push(line.to_string());
-        }
-
-        // Ensure there's a newline before our entries
-        if !lines.is_empty() && !lines.last().unwrap().is_empty() {
-            lines.push(String::new());
-        }
-
-        // Add all new/updated bindings
         for binding in bindings {
-            lines.push(format!("{}\t{}\t{}", binding.ip, binding.domain, MARKER));
+            parsed.anyrouter_bindings.insert(binding.domain.clone(), binding.ip.clone());
             updated_count += 1;
         }
 
-        // Write back (reuse the locked file handle)
-        file.set_len(0).map_err(HostsError::Io)?;
-        file.seek(SeekFrom::Start(0)).map_err(HostsError::Io)?;
+        // Generate new content
+        let new_content = parsed.to_string();
 
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                writeln!(file)?;
-            }
-            write!(file, "{}", line)?;
-        }
+        // Atomic write
+        atomic_write(path, &new_content)?;
 
         // Lock is automatically released when file is dropped
         Ok(updated_count)
@@ -271,32 +382,36 @@ impl HostsManager {
     }
 
     /// Internal: clear binding from custom path (for testing)
+    /// Now uses file locking for safety
     fn clear_binding_from_path(path: &Path, domain: &str) -> Result<(), HostsError> {
-        let content = fs::read(path)?;
-        let content = if content.starts_with(&[0xEF, 0xBB, 0xBF]) {
-            String::from_utf8_lossy(&content[3..]).to_string()
-        } else {
-            String::from_utf8_lossy(&content).to_string()
-        };
-
-        let lines: Vec<&str> = content
-            .lines()
-            .filter(|line| {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    return true;
-                }
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                !(parts.len() >= 2 && parts[1] == domain)
-            })
-            .collect();
-
-        let mut file = fs::OpenOptions::new()
+        // Open file with exclusive lock for atomic read-modify-write
+        let mut file = OpenOptions::new()
+            .read(true)
             .write(true)
-            .truncate(true)
-            .open(path)?;
+            .open(path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    HostsError::PermissionDenied
+                } else {
+                    HostsError::Io(e)
+                }
+            })?;
 
-        write!(file, "{}", lines.join("\n"))?;
+        // Acquire exclusive lock (blocks until available)
+        file.lock_exclusive().map_err(HostsError::Io)?;
+
+        // Read and parse existing content
+        let content = read_hosts_content(&mut file)?;
+        let mut parsed = ParsedHosts::parse(&content);
+
+        // Remove binding
+        parsed.anyrouter_bindings.remove(domain);
+
+        // Generate new content
+        let new_content = parsed.to_string();
+
+        // Atomic write
+        atomic_write(path, &new_content)?;
 
         Ok(())
     }
@@ -312,10 +427,10 @@ impl HostsManager {
             return Ok(0);
         }
 
-        let domains_set: std::collections::HashSet<&str> = domains.iter().copied().collect();
+        let domains_set: HashSet<&str> = domains.iter().copied().collect();
 
         // Open file with exclusive lock for atomic read-modify-write
-        let mut file = fs::OpenOptions::new()
+        let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(path)
@@ -330,39 +445,23 @@ impl HostsManager {
         // Acquire exclusive lock (blocks until available)
         file.lock_exclusive().map_err(HostsError::Io)?;
 
-        // Read existing content using the locked file handle (not reopening!)
-        let mut raw_content = Vec::new();
-        file.read_to_end(&mut raw_content).map_err(HostsError::Io)?;
+        // Read and parse existing content
+        let content = read_hosts_content(&mut file)?;
+        let mut parsed = ParsedHosts::parse(&content);
 
-        let content = if raw_content.starts_with(&[0xEF, 0xBB, 0xBF]) {
-            String::from_utf8_lossy(&raw_content[3..]).to_string()
-        } else {
-            String::from_utf8_lossy(&raw_content).to_string()
-        };
-
+        // Remove bindings and count
         let mut removed_count = 0;
-        let lines: Vec<&str> = content
-            .lines()
-            .filter(|line| {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    return true;
-                }
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 && domains_set.contains(parts[1]) {
-                    removed_count += 1;
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect();
+        for domain in &domains_set {
+            if parsed.anyrouter_bindings.remove(*domain).is_some() {
+                removed_count += 1;
+            }
+        }
 
-        // Write back (reuse the locked file handle)
-        file.set_len(0).map_err(HostsError::Io)?;
-        file.seek(SeekFrom::Start(0)).map_err(HostsError::Io)?;
+        // Generate new content
+        let new_content = parsed.to_string();
 
-        write!(file, "{}", lines.join("\n"))?;
+        // Atomic write
+        atomic_write(path, &new_content)?;
 
         Ok(removed_count)
     }
@@ -371,15 +470,16 @@ impl HostsManager {
     pub fn flush_dns() -> Result<(), HostsError> {
         #[cfg(windows)]
         {
-            std::process::Command::new("ipconfig")
+            // Use absolute path to prevent PATH injection attacks
+            std::process::Command::new(r"C:\Windows\System32\ipconfig.exe")
                 .args(["/flushdns"])
                 .output()?;
         }
 
         #[cfg(not(windows))]
         {
-            // macOS
-            std::process::Command::new("dscacheutil")
+            // macOS - use absolute path
+            std::process::Command::new("/usr/bin/dscacheutil")
                 .args(["-flushcache"])
                 .output()
                 .ok();
@@ -453,9 +553,20 @@ mod tests {
     }
 
     #[test]
-    fn test_read_binding_found() {
+    fn test_read_binding_found_in_block() {
         let dir = TempDir::new().unwrap();
-        let content = "127.0.0.1\tlocalhost\n1.2.3.4\ttest.com\t# AnyRouter";
+        let content = "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.2.3.4\ttest.com\t# anyFAST\n# END anyFAST";
+        let path = create_hosts_file(&dir, content);
+        let manager = TestableHostsManager::new(path);
+
+        let ip = manager.read_binding("test.com");
+        assert_eq!(ip, Some("1.2.3.4".to_string()));
+    }
+
+    #[test]
+    fn test_read_binding_legacy_format() {
+        let dir = TempDir::new().unwrap();
+        let content = "127.0.0.1\tlocalhost\n1.2.3.4\ttest.com\t# anyFAST";
         let path = create_hosts_file(&dir, content);
         let manager = TestableHostsManager::new(path);
 
@@ -473,21 +584,24 @@ mod tests {
         manager.write_binding("test.com", "1.2.3.4").unwrap();
 
         let result = fs::read_to_string(&path).unwrap();
-        assert!(result.contains("1.2.3.4\ttest.com\t# AnyRouter"));
+        assert!(result.contains("1.2.3.4\ttest.com"));
         assert!(result.contains("localhost"));
+        assert!(result.contains(MARKER_BEGIN));
+        assert!(result.contains(MARKER_END));
+        assert!(result.contains(MARKER_LINE));
     }
 
     #[test]
     fn test_write_binding_update_existing() {
         let dir = TempDir::new().unwrap();
-        let content = "127.0.0.1\tlocalhost\n1.1.1.1\ttest.com\t# AnyRouter";
+        let content = "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.1.1.1\ttest.com\t# anyFAST\n# END anyFAST";
         let path = create_hosts_file(&dir, content);
         let manager = TestableHostsManager::new(path.clone());
 
         manager.write_binding("test.com", "2.2.2.2").unwrap();
 
         let result = fs::read_to_string(&path).unwrap();
-        assert!(result.contains("2.2.2.2\ttest.com\t# AnyRouter"));
+        assert!(result.contains("2.2.2.2\ttest.com"));
         assert!(!result.contains("1.1.1.1"));
     }
 
@@ -507,8 +621,10 @@ mod tests {
         assert_eq!(count, 2);
 
         let result = fs::read_to_string(&path).unwrap();
-        assert!(result.contains("1.1.1.1\ttest1.com\t# AnyRouter"));
-        assert!(result.contains("2.2.2.2\ttest2.com\t# AnyRouter"));
+        assert!(result.contains("1.1.1.1\ttest1.com"));
+        assert!(result.contains("2.2.2.2\ttest2.com"));
+        assert!(result.contains(MARKER_BEGIN));
+        assert!(result.contains(MARKER_END));
     }
 
     #[test]
@@ -525,7 +641,7 @@ mod tests {
     #[test]
     fn test_clear_binding() {
         let dir = TempDir::new().unwrap();
-        let content = "127.0.0.1\tlocalhost\n1.2.3.4\ttest.com\t# AnyRouter";
+        let content = "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.2.3.4\ttest.com\t# anyFAST\n# END anyFAST";
         let path = create_hosts_file(&dir, content);
         let manager = TestableHostsManager::new(path.clone());
 
@@ -539,7 +655,7 @@ mod tests {
     #[test]
     fn test_clear_bindings_batch() {
         let dir = TempDir::new().unwrap();
-        let content = "127.0.0.1\tlocalhost\n1.1.1.1\ttest1.com\n2.2.2.2\ttest2.com";
+        let content = "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.1.1.1\ttest1.com\t# anyFAST\n2.2.2.2\ttest2.com\t# anyFAST\n# END anyFAST";
         let path = create_hosts_file(&dir, content);
         let manager = TestableHostsManager::new(path.clone());
 
@@ -602,8 +718,69 @@ mod tests {
     }
 
     #[test]
-    fn test_marker_identification() {
-        // Test that MARKER constant is correct
-        assert_eq!(MARKER, "# AnyRouter");
+    fn test_marker_block_format() {
+        let dir = TempDir::new().unwrap();
+        let content = "127.0.0.1\tlocalhost";
+        let path = create_hosts_file(&dir, content);
+        let manager = TestableHostsManager::new(path.clone());
+
+        manager.write_binding("example.com", "1.2.3.4").unwrap();
+        manager.write_binding("test.com", "5.6.7.8").unwrap();
+
+        let result = fs::read_to_string(&path).unwrap();
+
+        // Verify block structure
+        assert!(result.contains(MARKER_BEGIN));
+        assert!(result.contains(MARKER_END));
+
+        // Verify bindings are sorted alphabetically
+        let begin_pos = result.find(MARKER_BEGIN).unwrap();
+        let end_pos = result.find(MARKER_END).unwrap();
+        let example_pos = result.find("example.com").unwrap();
+        let test_pos = result.find("test.com").unwrap();
+
+        assert!(begin_pos < example_pos);
+        assert!(example_pos < test_pos);
+        assert!(test_pos < end_pos);
+    }
+
+    #[test]
+    fn test_preserves_non_anyrouter_entries() {
+        let dir = TempDir::new().unwrap();
+        let content = "127.0.0.1\tlocalhost\n192.168.1.1\tmyserver.local";
+        let path = create_hosts_file(&dir, content);
+        let manager = TestableHostsManager::new(path.clone());
+
+        manager.write_binding("test.com", "1.2.3.4").unwrap();
+
+        let result = fs::read_to_string(&path).unwrap();
+        // Non-anyFAST entries should be preserved
+        assert!(result.contains("127.0.0.1\tlocalhost"));
+        assert!(result.contains("192.168.1.1\tmyserver.local"));
+    }
+
+    #[test]
+    fn test_unclosed_block_preserves_content() {
+        let dir = TempDir::new().unwrap();
+        // Missing END marker - content after BEGIN should not be lost
+        let content = "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.2.3.4\ttest.com\t# anyFAST\n# User added comment\n192.168.1.1\tmyserver.local";
+        let path = create_hosts_file(&dir, content);
+        let manager = TestableHostsManager::new(path.clone());
+
+        // Reading should still work
+        let ip = manager.read_binding("test.com");
+        assert_eq!(ip, Some("1.2.3.4".to_string()));
+
+        // Writing should preserve non-binding content
+        manager.write_binding("new.com", "5.6.7.8").unwrap();
+
+        let result = fs::read_to_string(&path).unwrap();
+        assert!(result.contains("127.0.0.1\tlocalhost"));
+        // The user comment should be preserved
+        assert!(result.contains("# User added comment"));
+        // New binding should be added
+        assert!(result.contains("5.6.7.8\tnew.com"));
+        // Block should now be properly closed
+        assert!(result.contains(MARKER_END));
     }
 }

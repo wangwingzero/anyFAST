@@ -90,19 +90,45 @@ jobs:
         working-directory: rust
         run: npm ci
 
+      - name: Build Windows Service (Windows only)
+        if: matrix.os == 'windows-latest'
+        working-directory: rust/src-tauri
+        run: |
+          cargo build --release --bin anyfast-service
+          mkdir -p binaries
+          cp target/release/anyfast-service.exe binaries/anyfast-service-x86_64-pc-windows-msvc.exe
+
+      - name: Configure Windows resources (Windows only)
+        if: matrix.os == 'windows-latest'
+        working-directory: rust/src-tauri
+        shell: pwsh
+        run: |
+          $config = Get-Content tauri.conf.json | ConvertFrom-Json
+          $config.bundle | Add-Member -NotePropertyName "resources" -NotePropertyValue @{"binaries/anyfast-service-x86_64-pc-windows-msvc.exe" = "anyfast-service.exe"} -Force
+          $config | ConvertTo-Json -Depth 10 | Set-Content tauri.conf.json
+
       - name: Build Tauri app
         working-directory: rust
         run: npm run tauri build -- --target ${{ matrix.target }}
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Upload Windows MSI
+      - name: Upload Windows artifacts
         if: matrix.os == 'windows-latest'
         uses: softprops/action-gh-release@v2
         with:
           files: |
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            rust/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi.sig
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe.sig
+
+      - name: Upload update manifest (Windows only)
+        if: matrix.os == 'windows-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/latest.json
 
       - name: Upload macOS DMG
         if: matrix.os == 'macos-latest'

@@ -6,14 +6,22 @@ mod endpoint_tester;
 mod health_checker;
 mod history;
 mod hosts_manager;
+mod hosts_ops;
 mod models;
+
+// Service module (Windows only)
+#[cfg(windows)]
+pub mod service;
+
+// Client module for communicating with the service
+pub mod client;
 
 use config::ConfigManager;
 use endpoint_tester::EndpointTester;
 use health_checker::{HealthChecker, HealthStatus};
 use history::HistoryManager;
-use hosts_manager::{HostsBinding, HostsManager};
-use models::{AppConfig, Endpoint, EndpointResult, HistoryRecord, HistoryStats};
+use hosts_manager::HostsBinding;
+use models::{AppConfig, Endpoint, EndpointResult, HistoryRecord, HistoryStats, PermissionStatus, UpdateInfo};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
@@ -115,8 +123,8 @@ async fn stop_speed_test(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn apply_endpoint(domain: String, ip: String) -> Result<(), String> {
-    HostsManager::write_binding(&domain, &ip).map_err(|e| e.to_string())?;
-    HostsManager::flush_dns().map_err(|e| e.to_string())
+    hosts_ops::write_binding(&domain, &ip).map_err(|e| e.to_string())?;
+    hosts_ops::flush_dns().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -179,8 +187,8 @@ async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> 
     }
 
     // Apply all bindings in a single file operation
-    let count = HostsManager::write_bindings_batch(&bindings).map_err(|e| e.to_string())?;
-    HostsManager::flush_dns().map_err(|e| e.to_string())?;
+    let count = hosts_ops::write_bindings_batch(&bindings).map_err(|e| e.to_string())?;
+    hosts_ops::flush_dns().map_err(|e| e.to_string())?;
 
     Ok(count as u32)
 }
@@ -197,10 +205,10 @@ async fn clear_all_bindings(state: State<'_, AppState>) -> Result<u32, String> {
     }
 
     // Clear all bindings in a single file operation
-    let count = HostsManager::clear_bindings_batch(&domains).map_err(|e| e.to_string())?;
+    let count = hosts_ops::clear_bindings_batch(&domains).map_err(|e| e.to_string())?;
 
     if count > 0 {
-        HostsManager::flush_dns().map_err(|e| e.to_string())?;
+        hosts_ops::flush_dns().map_err(|e| e.to_string())?;
     }
 
     Ok(count as u32)
@@ -212,7 +220,7 @@ async fn get_bindings(state: State<'_, AppState>) -> Result<Vec<(String, Option<
     let mut bindings = Vec::new();
 
     for endpoint in config.endpoints {
-        let ip = HostsManager::read_binding(&endpoint.domain);
+        let ip = hosts_ops::read_binding(&endpoint.domain);
         bindings.push((endpoint.domain, ip));
     }
 
@@ -225,7 +233,7 @@ async fn get_binding_count(state: State<'_, AppState>) -> Result<u32, String> {
     let mut count = 0;
 
     for endpoint in config.endpoints {
-        if HostsManager::read_binding(&endpoint.domain).is_some() {
+        if hosts_ops::read_binding(&endpoint.domain).is_some() {
             count += 1;
         }
     }
@@ -235,23 +243,30 @@ async fn get_binding_count(state: State<'_, AppState>) -> Result<u32, String> {
 
 #[tauri::command]
 fn check_admin() -> bool {
-    #[cfg(windows)]
-    {
-        // Simple check: try to open hosts file for write
-        use std::fs::OpenOptions;
-        let path = r"C:\Windows\System32\drivers\etc\hosts";
-        OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(path)
-            .is_ok()
-    }
+    let (has_permission, _is_using_service) = hosts_ops::get_permission_status();
+    has_permission
+}
 
-    #[cfg(not(windows))]
-    {
-        // On Unix, check if running as root
-        unsafe { libc::geteuid() == 0 }
+/// Check if the hosts service is running
+#[tauri::command]
+fn is_service_running() -> bool {
+    hosts_ops::is_service_running()
+}
+
+/// Get permission status as a structured object
+#[tauri::command]
+fn get_permission_status() -> PermissionStatus {
+    let (has_permission, is_using_service) = hosts_ops::get_permission_status();
+    PermissionStatus {
+        has_permission,
+        is_using_service,
     }
+}
+
+/// Refresh service status check
+#[tauri::command]
+fn refresh_service_status() -> bool {
+    hosts_ops::refresh_service_status()
 }
 
 #[tauri::command]
@@ -393,6 +408,147 @@ async fn is_auto_mode_running(state: State<'_, AppState>) -> Result<bool, String
     Ok(token.is_some())
 }
 
+// 当前版本号（从 Cargo.toml 读取）
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// GitHub 仓库信息
+const GITHUB_REPO: &str = "wangwingzero/anyFAST";
+
+/// 检查更新
+#[tauri::command]
+async fn check_for_update() -> Result<UpdateInfo, String> {
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent("anyFAST")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("请求 GitHub API 失败: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("GitHub API 返回错误: {}", response.status()));
+    }
+
+    let release: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析响应失败: {}", e))?;
+
+    let latest_version = release["tag_name"]
+        .as_str()
+        .unwrap_or("")
+        .trim_start_matches('v')
+        .to_string();
+
+    let release_notes = release["body"].as_str().unwrap_or("").to_string();
+    let release_url = release["html_url"]
+        .as_str()
+        .unwrap_or(&format!("https://github.com/{}/releases/latest", GITHUB_REPO))
+        .to_string();
+    let published_at = release["published_at"].as_str().unwrap_or("").to_string();
+
+    // 比较版本号
+    let has_update = compare_versions(&latest_version, CURRENT_VERSION);
+
+    Ok(UpdateInfo {
+        current_version: CURRENT_VERSION.to_string(),
+        latest_version,
+        has_update,
+        release_url,
+        release_notes,
+        published_at,
+    })
+}
+
+/// 比较版本号，返回 true 如果 latest > current
+fn compare_versions(latest: &str, current: &str) -> bool {
+    let parse_version = |v: &str| -> Vec<u32> {
+        v.split('.')
+            .filter_map(|s| s.parse().ok())
+            .collect()
+    };
+
+    let latest_parts = parse_version(latest);
+    let current_parts = parse_version(current);
+
+    for i in 0..latest_parts.len().max(current_parts.len()) {
+        let l = latest_parts.get(i).copied().unwrap_or(0);
+        let c = current_parts.get(i).copied().unwrap_or(0);
+        if l > c {
+            return true;
+        }
+        if l < c {
+            return false;
+        }
+    }
+    false
+}
+
+/// 获取当前版本号
+#[tauri::command]
+fn get_current_version() -> String {
+    CURRENT_VERSION.to_string()
+}
+
+/// Restart the application as administrator
+#[tauri::command]
+async fn restart_as_admin() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use std::ffi::OsStr;
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let exe_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to get exe path: {}", e))?;
+
+        let exe_str: Vec<u16> = OsStr::new(exe_path.as_os_str())
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let verb: Vec<u16> = OsStr::new("runas")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let result = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR::from_raw(verb.as_ptr()),
+                PCWSTR::from_raw(exe_str.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+
+        // ShellExecuteW returns > 32 on success
+        if result.0 as usize > 32 {
+            // Exit current instance
+            std::process::exit(0);
+        } else {
+            return Err("用户取消了管理员权限请求".to_string());
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err("此功能仅在 Windows 上可用".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -442,8 +598,8 @@ pub fn run() {
                                         let domains: Vec<&str> = config.endpoints.iter()
                                             .map(|e| e.domain.as_str())
                                             .collect();
-                                        let _ = HostsManager::clear_bindings_batch(&domains);
-                                        let _ = HostsManager::flush_dns();
+                                        let _ = hosts_ops::clear_bindings_batch(&domains);
+                                        let _ = hosts_ops::flush_dns();
                                     }
                                 }
                             }
@@ -525,6 +681,9 @@ pub fn run() {
             get_bindings,
             get_binding_count,
             check_admin,
+            is_service_running,
+            get_permission_status,
+            refresh_service_status,
             get_hosts_path,
             open_hosts_file,
             get_history_stats,
@@ -534,6 +693,11 @@ pub fn run() {
             stop_auto_mode,
             get_auto_mode_status,
             is_auto_mode_running,
+            // 权限
+            restart_as_admin,
+            // 更新检查
+            check_for_update,
+            get_current_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

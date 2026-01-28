@@ -72,10 +72,10 @@ describe('Dashboard', () => {
     expect(screen.getByText('当前绑定')).toBeInTheDocument()
   })
 
-  it('shows empty state when no results', () => {
-    render(<Dashboard {...defaultProps} />)
+  it('shows empty state when no endpoints', () => {
+    render(<Dashboard {...defaultProps} endpoints={[]} />)
 
-    expect(screen.getByText('点击"开始测速"测试端点')).toBeInTheDocument()
+    expect(screen.getByText('请先添加端点')).toBeInTheDocument()
   })
 
   it('shows start button when not running', () => {
@@ -118,10 +118,11 @@ describe('Dashboard', () => {
   it('renders results table with data', () => {
     render(<Dashboard {...defaultProps} results={mockResults} />)
 
-    expect(screen.getByText('Test 1')).toBeInTheDocument()
-    expect(screen.getByText('Test 2')).toBeInTheDocument()
-    expect(screen.getByText('test1.com')).toBeInTheDocument()
-    expect(screen.getByText('test2.com')).toBeInTheDocument()
+    // Test 1 and Test 2 appear in both endpoint list and results table
+    expect(screen.getAllByText('Test 1').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Test 2').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('test1.com').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('test2.com').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('100ms')).toBeInTheDocument()
     expect(screen.getByText('150ms')).toBeInTheDocument()
   })

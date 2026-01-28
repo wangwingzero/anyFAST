@@ -13,6 +13,7 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
+use reqwest::Client;
 
 /// 日志宏：输出带时间戳的调试日志到 stderr
 macro_rules! debug_log {
@@ -39,12 +40,15 @@ macro_rules! error_log {
     };
 }
 
-/// Default Cloudflare IPs for optimization
+/// Default Cloudflare IPs for optimization (fallback when online API fails)
 const DEFAULT_CF_IPS: &[&str] = &[
     "104.16.0.1", "104.17.0.1", "104.18.0.1", "104.19.0.1",
     "104.20.0.1", "104.21.0.1", "104.22.0.1", "104.23.0.1",
     "172.67.0.1", "172.67.100.1", "162.159.0.1",
 ];
+
+/// Online API for fetching optimized Cloudflare IPs
+const IPDB_API_URL: &str = "https://ipdb.api.030101.xyz/?type=bestcf";
 
 /// Cloudflare IP ranges for detection
 const CF_RANGES: &[&str] = &[
@@ -59,12 +63,55 @@ pub fn is_cloudflare_ip(ip: &str) -> bool {
     CF_RANGES.iter().any(|r| ip.starts_with(r))
 }
 
-/// Get Cloudflare IPs to test (custom or default)
-pub fn get_cf_ips(custom_cf_ips: &[String]) -> Vec<String> {
-    if !custom_cf_ips.is_empty() {
-        custom_cf_ips.to_vec()
-    } else {
-        DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
+/// Fetch optimized Cloudflare IPs from online API
+/// Returns IPs from IPDB API, falls back to default IPs on failure
+pub async fn fetch_online_cf_ips() -> Vec<String> {
+    info_log!("从 IPDB API 获取优选 IP...");
+    
+    let client = match Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn_log!("创建 HTTP 客户端失败: {}, 使用默认 IP", e);
+            return DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect();
+        }
+    };
+
+    match client.get(IPDB_API_URL).send().await {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                match resp.text().await {
+                    Ok(text) => {
+                        let ips: Vec<String> = text
+                            .lines()
+                            .map(|line| line.trim().to_string())
+                            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                            .collect();
+                        
+                        if ips.is_empty() {
+                            warn_log!("IPDB API 返回空列表，使用默认 IP");
+                            DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
+                        } else {
+                            info_log!("从 IPDB API 获取到 {} 个优选 IP", ips.len());
+                            ips
+                        }
+                    }
+                    Err(e) => {
+                        warn_log!("读取 IPDB API 响应失败: {}, 使用默认 IP", e);
+                        DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
+                    }
+                }
+            } else {
+                warn_log!("IPDB API 返回状态码 {}, 使用默认 IP", resp.status());
+                DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
+            }
+        }
+        Err(e) => {
+            warn_log!("请求 IPDB API 失败: {}, 使用默认 IP", e);
+            DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
+        }
     }
 }
 
@@ -72,10 +119,13 @@ pub fn get_cf_ips(custom_cf_ips: &[String]) -> Vec<String> {
 #[derive(Clone)]
 pub struct EndpointTester {
     custom_cf_ips: Arc<Vec<String>>,
+    online_cf_ips: Arc<Mutex<Option<Vec<String>>>>,
     cancelled: Arc<AtomicBool>,
     resolver: Arc<TokioAsyncResolver>,
     tls_connector: TlsConnector,
 }
+
+use tokio::sync::Mutex;
 
 impl EndpointTester {
     pub fn new(custom_cf_ips: Vec<String>) -> Self {
@@ -96,6 +146,7 @@ impl EndpointTester {
 
         Self {
             custom_cf_ips: Arc::new(custom_cf_ips),
+            online_cf_ips: Arc::new(Mutex::new(None)),
             cancelled: Arc::new(AtomicBool::new(false)),
             resolver: Arc::new(resolver),
             tls_connector,
@@ -106,8 +157,30 @@ impl EndpointTester {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
-    fn get_cf_ips(&self) -> Vec<String> {
-        get_cf_ips(&self.custom_cf_ips)
+    /// Get CF IPs: custom > online API > default fallback
+    async fn get_cf_ips(&self) -> Vec<String> {
+        // 1. 如果用户配置了自定义 IP，优先使用
+        if !self.custom_cf_ips.is_empty() {
+            debug_log!("使用用户自定义 CF IP ({} 个)", self.custom_cf_ips.len());
+            return self.custom_cf_ips.to_vec();
+        }
+
+        // 2. 尝试使用缓存的在线 IP
+        {
+            let cached = self.online_cf_ips.lock().await;
+            if let Some(ips) = cached.as_ref() {
+                debug_log!("使用缓存的在线优选 IP ({} 个)", ips.len());
+                return ips.clone();
+            }
+        }
+
+        // 3. 从在线 API 获取并缓存
+        let online_ips = fetch_online_cf_ips().await;
+        {
+            let mut cached = self.online_cf_ips.lock().await;
+            *cached = Some(online_ips.clone());
+        }
+        online_ips
     }
 
     /// Test all endpoints concurrently with controlled parallelism
@@ -124,6 +197,9 @@ impl EndpointTester {
         debug_log!("最大并发数: {}", max_concurrency);
         let semaphore = Arc::new(Semaphore::new(max_concurrency));
         let mut join_set = JoinSet::new();
+
+        // 追踪已 spawn 的端点，用于处理 panic 情况
+        let mut spawned_endpoints: Vec<Endpoint> = Vec::new();
 
         for (idx, endpoint) in endpoints.iter().enumerate() {
             if self.cancelled.load(Ordering::SeqCst) {
@@ -152,6 +228,9 @@ impl EndpointTester {
                 }
             };
 
+            // 记录已 spawn 的端点
+            spawned_endpoints.push(endpoint.clone());
+
             let idx_copy = idx;
             let total = endpoints.len();
             join_set.spawn(async move {
@@ -172,6 +251,7 @@ impl EndpointTester {
 
         let mut results = Vec::with_capacity(endpoints.len());
         let collect_start = Instant::now();
+        let mut panic_count = 0usize;
 
         // 收集结果，添加总体超时保护（30秒）
         loop {
@@ -193,14 +273,15 @@ impl EndpointTester {
             match tokio::time::timeout(Duration::from_secs(5), join_set.join_next()).await {
                 Ok(Some(Ok(result))) => {
                     results.push(result);
-                    debug_log!("已收集 {}/{} 个结果", results.len(), endpoints.len());
+                    debug_log!("已收集 {}/{} 个结果", results.len(), spawned_endpoints.len());
                 }
                 Ok(Some(Err(e))) => {
+                    panic_count += 1;
                     error_log!("任务 panic: {:?}", e);
                 }
                 Ok(None) => {
                     // 所有任务完成
-                    info_log!("所有任务完成，共 {} 个结果", results.len());
+                    info_log!("所有任务完成，共 {} 个结果，{} 个 panic", results.len(), panic_count);
                     break;
                 }
                 Err(_) => {
@@ -210,8 +291,30 @@ impl EndpointTester {
             }
         }
 
-        // Sort by latency
-        results.sort_by(|a, b| a.latency.partial_cmp(&b.latency).unwrap());
+        // 为没有返回结果的端点（panic 或超时）创建失败记录
+        let returned_domains: std::collections::HashSet<String> = results.iter()
+            .map(|r| r.endpoint.domain.clone())
+            .collect();
+
+        for endpoint in &spawned_endpoints {
+            if !returned_domains.contains(&endpoint.domain) {
+                warn_log!("端点 {} ({}) 测试异常，未返回结果", endpoint.name, endpoint.domain);
+                results.push(EndpointResult::failure(
+                    endpoint.clone(),
+                    String::new(),
+                    "测试异常（任务崩溃或超时）".into(),
+                ));
+            }
+        }
+
+        // Sort by latency (成功的排前面，失败的排后面)
+        results.sort_by(|a, b| {
+            match (a.success, b.success) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.latency.partial_cmp(&b.latency).unwrap_or(std::cmp::Ordering::Equal),
+            }
+        });
 
         let success_count = results.iter().filter(|r| r.success).count();
         info_log!("测速完成: {}/{} 成功, 最佳延迟: {:.0}ms",
@@ -297,7 +400,7 @@ impl EndpointTester {
 
         // Collect IPs to test
         let test_ips: Vec<String> = if is_cf {
-            let mut ips = self.get_cf_ips();
+            let mut ips = self.get_cf_ips().await;
             ips.extend(dns_ips.clone());
             ips.into_iter().collect::<std::collections::HashSet<_>>().into_iter().take(15).collect()
         } else {
@@ -429,10 +532,11 @@ impl EndpointTester {
             .map_err(|e| format!("TLS: {}", e))?;
 
         // Extract path from URL - properly parse to avoid matching scheme slashes
+        // Also sanitize to prevent CRLF injection attacks
         let path = {
             let url_str = endpoint.url.as_str();
             // Find the path after the domain
-            if let Some(scheme_end) = url_str.find("://") {
+            let raw_path = if let Some(scheme_end) = url_str.find("://") {
                 let after_scheme = &url_str[scheme_end + 3..];
                 if let Some(path_start) = after_scheme.find('/') {
                     &after_scheme[path_start..]
@@ -443,6 +547,18 @@ impl EndpointTester {
                 url_str
             } else {
                 "/"
+            };
+
+            // Sanitize: remove CR/LF characters to prevent HTTP header injection
+            // This is a security measure against CRLF injection attacks
+            if raw_path.contains('\r') || raw_path.contains('\n') {
+                warn_log!("  警告: URL 路径包含非法字符 (CRLF)，已过滤: {}", endpoint.url);
+                raw_path
+                    .chars()
+                    .filter(|c| *c != '\r' && *c != '\n')
+                    .collect::<String>()
+            } else {
+                raw_path.to_string()
             }
         };
 
@@ -586,7 +702,7 @@ mod tests {
         let custom_ips = vec!["1.2.3.4".to_string()];
         let tester = EndpointTester::new(custom_ips);
 
-        let ips = tester.get_cf_ips();
+        let ips = tester.get_cf_ips().await;
         assert_eq!(ips.len(), 1);
         assert_eq!(ips[0], "1.2.3.4");
     }

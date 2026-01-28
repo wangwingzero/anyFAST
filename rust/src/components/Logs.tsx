@@ -76,18 +76,18 @@ ${'='.repeat(30)}
   }
 
   return (
-    <div className="h-full flex flex-col p-6">
+    <div className="h-full flex flex-col p-4 lg:p-6 overflow-y-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 lg:mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-apple-gray-600">运行日志</h1>
+          <h1 className="text-xl lg:text-2xl font-semibold text-apple-gray-600">运行日志</h1>
           <p className="text-sm text-apple-gray-400 mt-1">查看操作记录和测试结果</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={copyAllLogs}
             disabled={logs.length === 0}
-            className={`flex items-center gap-2 px-3 py-2 text-sm rounded-apple transition-colors disabled:opacity-50 ${
+            className={`flex items-center gap-2 px-3 py-2 text-sm rounded-xl transition-colors disabled:opacity-50 ${
               copied
                 ? 'text-apple-green bg-apple-green/10'
                 : 'text-apple-gray-500 bg-apple-gray-100 hover:bg-apple-gray-200'
@@ -101,23 +101,23 @@ ${'='.repeat(30)}
             ) : (
               <>
                 <Copy className="w-4 h-4" />
-                复制日志
+                <span className="hidden sm:inline">复制日志</span>
               </>
             )}
           </button>
           <button
             onClick={onClear}
             disabled={logs.length === 0}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-apple-gray-500 bg-apple-gray-100 rounded-apple hover:bg-apple-gray-200 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 text-sm text-apple-gray-500 bg-apple-gray-100 rounded-xl hover:bg-apple-gray-200 transition-colors disabled:opacity-50"
           >
             <Trash2 className="w-4 h-4" />
-            清空日志
+            <span className="hidden sm:inline">清空日志</span>
           </button>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 lg:gap-3 mb-4 lg:mb-6">
         <StatCard icon={<Clock className="w-4 h-4" />} label="总计" value={stats.total} color="gray" />
         <StatCard icon={<CheckCircle2 className="w-4 h-4" />} label="成功" value={stats.success} color="green" />
         <StatCard icon={<Info className="w-4 h-4" />} label="信息" value={stats.info} color="blue" />
@@ -126,14 +126,14 @@ ${'='.repeat(30)}
       </div>
 
       {/* Log List */}
-      <div className="flex-1 glass rounded-apple-lg shadow-apple overflow-hidden">
+      <div className="flex-1 bg-white/70 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 overflow-hidden min-h-0">
         <div
           ref={scrollRef}
-          className="h-full overflow-y-auto p-4 space-y-2"
+          className="h-full overflow-y-auto p-3 lg:p-4 space-y-2"
         >
           {logs.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-apple-gray-400">
-              <Zap className="w-16 h-16 mb-4 opacity-20" />
+            <div className="h-full flex flex-col items-center justify-center text-apple-gray-400 min-h-[200px]">
+              <Zap className="w-12 lg:w-16 h-12 lg:h-16 mb-4 opacity-20" />
               <p className="text-sm">暂无日志记录</p>
               <p className="text-xs mt-1 opacity-60">开始测速后将显示操作记录</p>
             </div>
@@ -142,16 +142,16 @@ ${'='.repeat(30)}
               <div
                 key={index}
                 className={`
-                  flex items-start gap-3 p-3 rounded-apple border
+                  flex items-start gap-2 lg:gap-3 p-2.5 lg:p-3 rounded-xl border
                   ${getLevelBg(log.level)}
                   animate-fade-in
                 `}
               >
-                <div className="mt-0.5">{getLevelIcon(log.level)}</div>
+                <div className="mt-0.5 flex-shrink-0">{getLevelIcon(log.level)}</div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-apple-gray-600 break-words">{log.message}</p>
+                  <p className="text-xs lg:text-sm text-apple-gray-600 break-words">{log.message}</p>
                 </div>
-                <span className="text-xs text-apple-gray-400 font-mono whitespace-nowrap">
+                <span className="text-xs text-apple-gray-400 font-mono whitespace-nowrap flex-shrink-0">
                   {log.timestamp}
                 </span>
               </div>
@@ -183,12 +183,12 @@ function StatCard({
   }
 
   return (
-    <div className="glass rounded-apple p-3 shadow-apple">
-      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${colorMap[color]} mb-2`}>
+    <div className="bg-white/70 backdrop-blur-sm rounded-xl p-2.5 lg:p-3 shadow-sm border border-gray-100">
+      <div className={`w-7 lg:w-8 h-7 lg:h-8 rounded-lg flex items-center justify-center ${colorMap[color]} mb-1.5 lg:mb-2`}>
         {icon}
       </div>
       <p className="text-xs text-apple-gray-400">{label}</p>
-      <p className="text-lg font-semibold text-apple-gray-600">{value}</p>
+      <p className="text-base lg:text-lg font-semibold text-apple-gray-600">{value}</p>
     </div>
   )
 }

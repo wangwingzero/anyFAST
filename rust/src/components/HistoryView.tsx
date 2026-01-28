@@ -79,25 +79,25 @@ export function HistoryView() {
   ]
 
   return (
-    <div className="h-full flex flex-col p-6 overflow-hidden">
+    <div className="h-full flex flex-col p-4 lg:p-6 overflow-y-auto">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-4 lg:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-apple-gray-600">历史统计</h1>
+          <h1 className="text-xl lg:text-2xl font-semibold text-apple-gray-600">历史统计</h1>
           <p className="text-sm text-apple-gray-400 mt-1">查看测速历史和加速效果统计</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={loadStats}
             disabled={loading}
-            className="flex items-center gap-2 px-3 py-1.5 bg-apple-gray-200 text-apple-gray-600 text-sm font-medium rounded-apple btn-press hover:bg-apple-gray-300 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-1.5 bg-apple-gray-200 text-apple-gray-600 text-sm font-medium rounded-xl btn-press hover:bg-apple-gray-300 transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             刷新
           </button>
           <button
             onClick={handleClearHistory}
-            className="flex items-center gap-2 px-3 py-1.5 bg-apple-red/10 text-apple-red text-sm font-medium rounded-apple btn-press hover:bg-apple-red/20 transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 bg-apple-red/10 text-apple-red text-sm font-medium rounded-xl btn-press hover:bg-apple-red/20 transition-colors"
           >
             <Trash2 className="w-4 h-4" />
             清除
@@ -106,13 +106,13 @@ export function HistoryView() {
       </div>
 
       {/* Time Range Selector */}
-      <div className="mb-6">
-        <div className="inline-flex bg-apple-gray-200 rounded-apple p-1">
+      <div className="mb-4 lg:mb-6">
+        <div className="inline-flex bg-apple-gray-200 rounded-xl p-1">
           {timeRangeOptions.map((option) => (
             <button
               key={option.value}
               onClick={() => setTimeRange(option.value)}
-              className={`px-4 py-1.5 text-sm font-medium rounded-apple transition-all ${
+              className={`px-3 lg:px-4 py-1.5 text-xs lg:text-sm font-medium rounded-lg transition-all ${
                 timeRange === option.value
                   ? 'bg-white text-apple-gray-600 shadow-sm'
                   : 'text-apple-gray-500 hover:text-apple-gray-600'
@@ -125,7 +125,7 @@ export function HistoryView() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:gap-4 mb-4 lg:mb-6">
         <StatCard
           icon={<BarChart3 className="w-5 h-5" />}
           label="总测试次数"
@@ -147,41 +147,42 @@ export function HistoryView() {
       </div>
 
       {/* Chart */}
-      <div className="glass rounded-apple-lg p-4 mb-6 shadow-apple">
+      <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-3 lg:p-4 mb-4 lg:mb-6 shadow-sm border border-gray-100">
         <h2 className="text-sm font-medium text-apple-gray-600 mb-4">延迟趋势</h2>
         {chartData.length > 0 ? (
-          <div className="h-48">
+          <div className="h-40 lg:h-48">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
                 <XAxis
                   dataKey="time"
-                  tick={{ fontSize: 11, fill: '#8e8e93' }}
+                  tick={{ fontSize: 10, fill: '#8e8e93' }}
                   axisLine={{ stroke: '#e5e5e5' }}
                 />
                 <YAxis
-                  tick={{ fontSize: 11, fill: '#8e8e93' }}
+                  tick={{ fontSize: 10, fill: '#8e8e93' }}
                   axisLine={{ stroke: '#e5e5e5' }}
                   unit="ms"
+                  width={40}
                 />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: 'rgba(255, 255, 255, 0.95)',
                     border: 'none',
-                    borderRadius: '8px',
-                    boxShadow: '0 2px 10px rgba(0, 0, 0, 0.1)',
+                    borderRadius: '12px',
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)',
                   }}
                   labelStyle={{ color: '#1d1d1f', fontWeight: 500 }}
                 />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Line
                   type="monotone"
                   dataKey="original"
                   name="原始延迟"
                   stroke="#ff9500"
                   strokeWidth={2}
-                  dot={{ r: 3 }}
-                  activeDot={{ r: 5 }}
+                  dot={{ r: 2 }}
+                  activeDot={{ r: 4 }}
                 />
                 <Line
                   type="monotone"
@@ -189,14 +190,14 @@ export function HistoryView() {
                   name="优化延迟"
                   stroke="#34c759"
                   strokeWidth={2}
-                  dot={{ r: 3 }}
-                  activeDot={{ r: 5 }}
+                  dot={{ r: 2 }}
+                  activeDot={{ r: 4 }}
                 />
               </LineChart>
             </ResponsiveContainer>
           </div>
         ) : (
-          <div className="h-48 flex items-center justify-center text-apple-gray-400">
+          <div className="h-40 lg:h-48 flex items-center justify-center text-apple-gray-400">
             <div className="text-center">
               <Zap className="w-10 h-10 mx-auto mb-2 opacity-30" />
               <p className="text-sm">暂无数据</p>
@@ -206,36 +207,39 @@ export function HistoryView() {
       </div>
 
       {/* Recent Records Table */}
-      <div className="flex-1 glass rounded-apple-lg shadow-apple overflow-hidden flex flex-col">
-        <div className="px-4 py-3 border-b border-apple-gray-200 flex items-center justify-between">
+      <div className="flex-1 bg-white/70 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-0">
+        <div className="px-3 lg:px-4 py-3 border-b border-apple-gray-200 flex items-center justify-between flex-shrink-0">
           <h2 className="text-sm font-medium text-apple-gray-600">最近记录</h2>
           <span className="text-xs text-apple-gray-400">
             共 {stats?.records.length ?? 0} 条
           </span>
         </div>
 
-        {/* Table Header */}
-        <div className="grid grid-cols-[150px_1fr_100px_100px_100px_80px] gap-2 px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100">
-          <span>时间</span>
-          <span>域名</span>
-          <span>原始延迟</span>
-          <span>优化延迟</span>
-          <span>加速效果</span>
-          <span>状态</span>
-        </div>
+        {/* Table Container */}
+        <div className="flex-1 overflow-auto min-h-0">
+          {/* Table Header */}
+          <div className="grid grid-cols-[80px_minmax(80px,1fr)_70px_70px_70px_60px] lg:grid-cols-[150px_1fr_100px_100px_100px_80px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
+            <span>时间</span>
+            <span>域名</span>
+            <span>原始</span>
+            <span>优化</span>
+            <span>效果</span>
+            <span>状态</span>
+          </div>
 
-        {/* Table Body */}
-        <div className="flex-1 overflow-y-auto">
-          {!stats?.records.length ? (
-            <div className="flex flex-col items-center justify-center h-full text-apple-gray-400">
-              <Calendar className="w-12 h-12 mb-3 opacity-30" />
-              <p className="text-sm">暂无历史记录</p>
-            </div>
-          ) : (
-            stats.records.map((record, index) => (
-              <RecordRow key={`${record.timestamp}-${index}`} record={record} />
-            ))
-          )}
+          {/* Table Body */}
+          <div className="flex-1">
+            {!stats?.records.length ? (
+              <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-apple-gray-400">
+                <Calendar className="w-12 h-12 mb-3 opacity-30" />
+                <p className="text-sm">暂无历史记录</p>
+              </div>
+            ) : (
+              stats.records.map((record, index) => (
+                <RecordRow key={`${record.timestamp}-${index}`} record={record} />
+              ))
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -260,14 +264,14 @@ function StatCard({
   }
 
   return (
-    <div className="glass rounded-apple-lg p-4 shadow-apple card-hover">
+    <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-4 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
       <div
-        className={`w-10 h-10 rounded-apple flex items-center justify-center ${colorMap[color]} mb-3`}
+        className={`w-10 h-10 rounded-xl flex items-center justify-center ${colorMap[color]} mb-3`}
       >
         {icon}
       </div>
       <p className="text-xs text-apple-gray-400 mb-1">{label}</p>
-      <p className="text-2xl font-semibold text-apple-gray-600">{value}</p>
+      <p className="text-xl lg:text-2xl font-semibold text-apple-gray-600">{value}</p>
     </div>
   )
 }
@@ -288,12 +292,12 @@ function RecordRow({ record }: { record: HistoryRecord }) {
         : 'text-apple-gray-400'
 
   return (
-    <div className="grid grid-cols-[150px_1fr_100px_100px_100px_80px] gap-2 px-4 py-2.5 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors">
-      <span className="text-sm text-apple-gray-400">{time}</span>
-      <span className="text-sm text-apple-gray-600 font-mono truncate">{record.domain}</span>
-      <span className="text-sm text-apple-orange">{record.original_latency.toFixed(0)}ms</span>
-      <span className="text-sm text-apple-green">{record.optimized_latency.toFixed(0)}ms</span>
-      <span className={`text-sm font-medium ${speedupColor}`}>
+    <div className="grid grid-cols-[80px_minmax(80px,1fr)_70px_70px_70px_60px] lg:grid-cols-[150px_1fr_100px_100px_100px_80px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 lg:py-2.5 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors">
+      <span className="text-xs lg:text-sm text-apple-gray-400 truncate">{time}</span>
+      <span className="text-xs lg:text-sm text-apple-gray-600 font-mono truncate">{record.domain}</span>
+      <span className="text-xs lg:text-sm text-apple-orange">{record.original_latency.toFixed(0)}ms</span>
+      <span className="text-xs lg:text-sm text-apple-green">{record.optimized_latency.toFixed(0)}ms</span>
+      <span className={`text-xs lg:text-sm font-medium ${speedupColor}`}>
         {record.speedup_percent > 0 ? '+' : ''}
         {record.speedup_percent.toFixed(1)}%
       </span>
@@ -301,12 +305,12 @@ function RecordRow({ record }: { record: HistoryRecord }) {
         {record.applied ? (
           <span className="inline-flex items-center gap-1 text-xs text-apple-green">
             <CheckCircle2 className="w-3 h-3" />
-            已应用
+            <span className="hidden lg:inline">已应用</span>
           </span>
         ) : (
           <span className="inline-flex items-center gap-1 text-xs text-apple-gray-400">
             <XCircle className="w-3 h-3" />
-            未应用
+            <span className="hidden lg:inline">未应用</span>
           </span>
         )}
       </div>

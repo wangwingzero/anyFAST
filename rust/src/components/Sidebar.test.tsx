@@ -13,7 +13,8 @@ describe('Sidebar', () => {
   beforeEach(async () => {
     mockOnNavigate.mockClear()
     const { invoke } = await import('@tauri-apps/api/core')
-    vi.mocked(invoke).mockResolvedValue(true)
+    // Default mock returns structured object (admin mode)
+    vi.mocked(invoke).mockResolvedValue({ hasPermission: true, isUsingService: false })
   })
 
   it('renders logo and title', () => {
@@ -68,7 +69,8 @@ describe('Sidebar', () => {
 
   it('shows admin status when admin', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
-    vi.mocked(invoke).mockResolvedValue(true)
+    // Structured response for admin mode
+    vi.mocked(invoke).mockResolvedValue({ hasPermission: true, isUsingService: false })
 
     render(<Sidebar currentView="dashboard" onNavigate={mockOnNavigate} />)
 
@@ -77,9 +79,22 @@ describe('Sidebar', () => {
     })
   })
 
+  it('shows service mode when using service', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    // Structured response for service mode
+    vi.mocked(invoke).mockResolvedValue({ hasPermission: true, isUsingService: true })
+
+    render(<Sidebar currentView="dashboard" onNavigate={mockOnNavigate} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Service 模式')).toBeInTheDocument()
+    })
+  })
+
   it('shows non-admin warning when not admin', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
-    vi.mocked(invoke).mockResolvedValue(false)
+    // Structured response for no permission
+    vi.mocked(invoke).mockResolvedValue({ hasPermission: false, isUsingService: false })
 
     render(<Sidebar currentView="dashboard" onNavigate={mockOnNavigate} />)
 
@@ -88,13 +103,15 @@ describe('Sidebar', () => {
     })
   })
 
-  it('shows loading state initially', async () => {
+  it('shows loading skeleton initially', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     vi.mocked(invoke).mockImplementation(() => new Promise(() => {})) // Never resolves
 
     render(<Sidebar currentView="dashboard" onNavigate={mockOnNavigate} />)
 
-    expect(screen.getByText('检查权限...')).toBeInTheDocument()
+    // Should have skeleton elements (divs with animate-pulse class)
+    const skeletons = document.querySelectorAll('.animate-pulse')
+    expect(skeletons.length).toBeGreaterThan(0)
   })
 
   it('handles error when checking admin status', async () => {

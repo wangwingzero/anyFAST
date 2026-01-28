@@ -4,10 +4,21 @@ version = "1.0.0"
 description = "anyFAST - 中转站端点优选工具"
 authors = ["hudawang"]
 edition = "2021"
+default-run = "anyfast"
 
 [lib]
 name = "anyfast_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
+
+# Main Tauri application
+[[bin]]
+name = "anyfast"
+path = "src/main.rs"
+
+# Service 可执行文件
+[[bin]]
+name = "anyfast-service"
+path = "src/bin/anyfast-service.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -23,6 +34,7 @@ tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 webpki-roots = "0.26"
 hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
+reqwest = { version = "0.12", default-features = false, features = ["native-tls", "json"] }
 directories = "5"
 thiserror = "2"
 chrono = "0.4"
@@ -33,8 +45,16 @@ windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_System_Console",
     "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
     "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Threading",
 ] }
+windows-service = "0.7"
+ctrlc = "3"
 
 [dev-dependencies]
 tempfile = "3"

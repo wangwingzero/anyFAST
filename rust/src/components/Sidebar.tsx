@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Activity, Settings, Zap, FileText, ShieldAlert, ShieldCheck, BarChart3 } from 'lucide-react'
+import { Activity, Settings, Zap, FileText, ShieldAlert, ShieldCheck, BarChart3, Server, RotateCcw } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
+import { PermissionStatus } from '../types'
 
 interface SidebarProps {
   currentView: 'dashboard' | 'settings' | 'logs' | 'history'
@@ -8,11 +9,24 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentView, onNavigate }: SidebarProps) {
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
+  const [permissionStatus, setPermissionStatus] = useState<PermissionStatus | null>(null)
+  const [isRestarting, setIsRestarting] = useState(false)
 
   useEffect(() => {
-    invoke<boolean>('check_admin').then(setIsAdmin).catch(() => setIsAdmin(false))
+    invoke<PermissionStatus>('get_permission_status')
+      .then(setPermissionStatus)
+      .catch(() => setPermissionStatus({ hasPermission: false, isUsingService: false }))
   }, [])
+
+  const handleRestartAsAdmin = async () => {
+    setIsRestarting(true)
+    try {
+      await invoke('restart_as_admin')
+    } catch {
+      // User cancelled or error
+      setIsRestarting(false)
+    }
+  }
 
   const items = [
     { id: 'dashboard' as const, icon: Activity, label: '仪表盘' },
@@ -22,15 +36,15 @@ export function Sidebar({ currentView, onNavigate }: SidebarProps) {
   ]
 
   return (
-    <aside className="w-56 glass border-r border-apple-gray-200 flex flex-col">
+    <aside className="w-16 lg:w-56 h-full bg-white/80 backdrop-blur-xl border-r border-gray-200/50 flex flex-col transition-[width] duration-300 ease-out">
       {/* Logo */}
-      <div className="h-14 flex items-center px-5 border-b border-apple-gray-200">
-        <Zap className="w-5 h-5 text-apple-blue mr-2" />
-        <span className="font-semibold text-apple-gray-600">anyFAST</span>
+      <div className="h-14 flex items-center justify-center lg:justify-start px-2 lg:px-5 border-b border-apple-gray-200">
+        <Zap className="w-5 h-5 text-apple-blue flex-shrink-0" aria-hidden="true" />
+        <span className="hidden lg:block ml-2 font-semibold text-apple-gray-600">anyFAST</span>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-3">
+      <nav className="flex-1 p-2 lg:p-3">
         {items.map((item) => {
           const Icon = item.icon
           const isActive = currentView === item.id
@@ -39,38 +53,61 @@ export function Sidebar({ currentView, onNavigate }: SidebarProps) {
             <button
               key={item.id}
               onClick={() => onNavigate(item.id)}
+              title={item.label}
               className={`
-                w-full flex items-center gap-3 px-3 py-2.5 rounded-apple text-sm font-medium
-                transition-all duration-150 btn-press
+                w-full flex items-center justify-center lg:justify-start gap-0 lg:gap-3
+                px-2 lg:px-3 py-2.5 mb-1 rounded-xl text-sm font-medium
+                transition-all duration-200 btn-press
                 ${isActive
-                  ? 'bg-apple-blue text-white shadow-apple'
-                  : 'text-apple-gray-500 hover:bg-apple-gray-200/50'
+                  ? 'bg-apple-blue text-white shadow-lg shadow-apple-blue/20'
+                  : 'text-apple-gray-500 hover:bg-apple-gray-100'
                 }
               `}
             >
-              <Icon className="w-4.5 h-4.5" />
-              {item.label}
+              <Icon className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+              <span className="hidden lg:inline">{item.label}</span>
             </button>
           )
         })}
       </nav>
 
       {/* Status */}
-      <div className="p-4 border-t border-apple-gray-200">
-        {isAdmin === null ? (
-          <div className="flex items-center gap-2 text-xs text-apple-gray-400">
-            <span className="w-2 h-2 rounded-full bg-apple-gray-300 animate-pulse" />
-            检查权限...
+      <div className="p-2 lg:p-4 border-t border-apple-gray-200">
+        {permissionStatus === null ? (
+          // Loading skeleton
+          <div className="flex items-center justify-center lg:justify-start gap-2 text-xs text-apple-gray-400">
+            <span className="w-4 h-4 rounded bg-apple-gray-200 animate-pulse flex-shrink-0" />
+            <span className="hidden lg:block w-20 h-3 rounded bg-apple-gray-200 animate-pulse" />
           </div>
-        ) : isAdmin ? (
-          <div className="flex items-center gap-2 text-xs text-apple-green">
-            <ShieldCheck className="w-4 h-4" />
-            管理员模式
-          </div>
+        ) : permissionStatus.hasPermission ? (
+          permissionStatus.isUsingService ? (
+            <div className="flex items-center justify-center lg:justify-start gap-2 text-xs text-blue-600" title="Service 模式">
+              <Server className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+              <span className="hidden lg:inline">Service 模式</span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center lg:justify-start gap-2 text-xs text-apple-green" title="管理员模式">
+              <ShieldCheck className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+              <span className="hidden lg:inline">管理员模式</span>
+            </div>
+          )
         ) : (
-          <div className="flex items-center gap-2 text-xs text-apple-orange">
-            <ShieldAlert className="w-4 h-4" />
-            <span>需要管理员权限</span>
+          <div className="space-y-2">
+            <div className="flex items-center justify-center lg:justify-start gap-2 text-xs text-apple-orange" title="需要管理员权限">
+              <ShieldAlert className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+              <span className="hidden lg:inline">需要管理员权限</span>
+            </div>
+            <button
+              onClick={handleRestartAsAdmin}
+              disabled={isRestarting}
+              title={isRestarting ? '正在重启...' : '以管理员身份重启'}
+              className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5
+                text-xs font-medium text-white bg-apple-orange rounded-lg
+                hover:bg-orange-600 transition-colors disabled:opacity-50"
+            >
+              <RotateCcw className={`w-3 h-3 flex-shrink-0 ${isRestarting ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <span className="hidden lg:inline">{isRestarting ? '正在重启...' : '以管理员身份重启'}</span>
+            </button>
           </div>
         )}
       </div>

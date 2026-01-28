@@ -96,3 +96,21 @@ export interface SwitchedEndpoint {
   new_ip: string
   new_latency: number
 }
+
+// ===== Service 相关类型 =====
+
+export interface PermissionStatus {
+  hasPermission: boolean
+  isUsingService: boolean
+}
+
+// ===== 更新相关类型 =====
+
+export interface UpdateInfo {
+  currentVersion: string
+  latestVersion: string
+  hasUpdate: boolean
+  releaseUrl: string
+  releaseNotes: string
+  publishedAt: string
+}

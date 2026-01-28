@@ -35,3 +35,6 @@ __pycache__/
 
 # Cache
 .cache/
+
+# Tauri signing keys (NEVER commit private keys!)
+rust/.tauri/keys/

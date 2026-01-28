@@ -109,6 +109,26 @@ pub struct HistoryStats {
     pub records: Vec<HistoryRecord>,
 }
 
+/// Permission status for hosts file operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionStatus {
+    pub has_permission: bool,
+    pub is_using_service: bool,
+}
+
+/// 更新信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub has_update: bool,
+    pub release_url: String,
+    pub release_notes: String,
+    pub published_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default = "default_mode")]
