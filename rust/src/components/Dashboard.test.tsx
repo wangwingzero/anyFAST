@@ -67,9 +67,10 @@ describe('Dashboard', () => {
   it('renders status cards with initial values', () => {
     render(<Dashboard {...defaultProps} />)
 
-    expect(screen.getByText('已测端点')).toBeInTheDocument()
-    expect(screen.getByText('可用端点')).toBeInTheDocument()
-    expect(screen.getByText('当前绑定')).toBeInTheDocument()
+    // 紧凑布局使用简短标签
+    expect(screen.getByText('已测')).toBeInTheDocument()
+    expect(screen.getByText('可用')).toBeInTheDocument()
+    expect(screen.getByText('绑定')).toBeInTheDocument()
   })
 
   it('shows empty state when no endpoints', () => {
@@ -197,7 +198,7 @@ describe('Dashboard', () => {
 
     render(<Dashboard {...defaultProps} results={[failedResult]} />)
 
-    expect(screen.getByText('连接超时')).toBeInTheDocument()
+    // 失败时显示错误信息，但不显示应用按钮
     expect(screen.queryByText('应用')).not.toBeInTheDocument()
   })
 

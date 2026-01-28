@@ -40,3 +40,9 @@ Object.defineProperty(window, 'matchMedia', {
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
+
+// Mock Tauri event API
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+  emit: vi.fn(),
+}))
