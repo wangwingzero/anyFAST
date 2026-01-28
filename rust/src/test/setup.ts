@@ -41,8 +41,19 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
-// Mock Tauri event API
+// Mock Tauri event API - 需要完整 mock 以避免 transformCallback 错误
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(() => Promise.resolve(() => {})),
-  emit: vi.fn(),
+  listen: vi.fn().mockImplementation(() => Promise.resolve(() => {})),
+  emit: vi.fn().mockImplementation(() => Promise.resolve()),
+  once: vi.fn().mockImplementation(() => Promise.resolve(() => {})),
 }))
+
+// Mock window.__TAURI_INTERNALS__ for any direct usage
+Object.defineProperty(window, '__TAURI_INTERNALS__', {
+  value: {
+    transformCallback: vi.fn(),
+    invoke: vi.fn(),
+    metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
+  },
+  writable: true,
+})
