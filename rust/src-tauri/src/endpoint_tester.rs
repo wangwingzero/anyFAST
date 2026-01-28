@@ -1,6 +1,9 @@
 //! Endpoint speed tester with Cloudflare IP optimization
 
 use crate::models::{Endpoint, EndpointResult};
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::TokioAsyncResolver;
+use reqwest::Client;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,9 +14,6 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
-use reqwest::Client;
 
 /// 日志宏：输出带时间戳的调试日志到 stderr
 macro_rules! debug_log {
@@ -42,9 +42,17 @@ macro_rules! error_log {
 
 /// Default Cloudflare IPs for optimization (fallback when online API fails)
 const DEFAULT_CF_IPS: &[&str] = &[
-    "104.16.0.1", "104.17.0.1", "104.18.0.1", "104.19.0.1",
-    "104.20.0.1", "104.21.0.1", "104.22.0.1", "104.23.0.1",
-    "172.67.0.1", "172.67.100.1", "162.159.0.1",
+    "104.16.0.1",
+    "104.17.0.1",
+    "104.18.0.1",
+    "104.19.0.1",
+    "104.20.0.1",
+    "104.21.0.1",
+    "104.22.0.1",
+    "104.23.0.1",
+    "172.67.0.1",
+    "172.67.100.1",
+    "162.159.0.1",
 ];
 
 /// Online API for fetching optimized Cloudflare IPs
@@ -52,10 +60,8 @@ const IPDB_API_URL: &str = "https://ipdb.api.030101.xyz/?type=bestcf";
 
 /// Cloudflare IP ranges for detection
 const CF_RANGES: &[&str] = &[
-    "104.16.", "104.17.", "104.18.", "104.19.",
-    "104.20.", "104.21.", "104.22.", "104.23.",
-    "104.24.", "104.25.", "104.26.", "104.27.",
-    "172.67.", "162.159.",
+    "104.16.", "104.17.", "104.18.", "104.19.", "104.20.", "104.21.", "104.22.", "104.23.",
+    "104.24.", "104.25.", "104.26.", "104.27.", "172.67.", "162.159.",
 ];
 
 /// Check if an IP is in Cloudflare's range
@@ -67,11 +73,8 @@ pub fn is_cloudflare_ip(ip: &str) -> bool {
 /// Returns IPs from IPDB API, falls back to default IPs on failure
 pub async fn fetch_online_cf_ips() -> Vec<String> {
     info_log!("从 IPDB API 获取优选 IP...");
-    
-    let client = match Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-    {
+
+    let client = match Client::builder().timeout(Duration::from_secs(10)).build() {
         Ok(c) => c,
         Err(e) => {
             warn_log!("创建 HTTP 客户端失败: {}, 使用默认 IP", e);
@@ -89,7 +92,7 @@ pub async fn fetch_online_cf_ips() -> Vec<String> {
                             .map(|line| line.trim().to_string())
                             .filter(|line| !line.is_empty() && !line.starts_with('#'))
                             .collect();
-                        
+
                         if ips.is_empty() {
                             warn_log!("IPDB API 返回空列表，使用默认 IP");
                             DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
@@ -207,7 +210,13 @@ impl EndpointTester {
                 break;
             }
 
-            debug_log!("[{}/{}] 准备测试端点: {} ({})", idx + 1, endpoints.len(), endpoint.name, endpoint.domain);
+            debug_log!(
+                "[{}/{}] 准备测试端点: {} ({})",
+                idx + 1,
+                endpoints.len(),
+                endpoint.name,
+                endpoint.domain
+            );
 
             let endpoint = endpoint.clone();
             let tester = self.clone();
@@ -215,8 +224,10 @@ impl EndpointTester {
             // 获取信号量，添加 5 秒超时防止死锁
             let permit = match tokio::time::timeout(
                 Duration::from_secs(5),
-                semaphore.clone().acquire_owned()
-            ).await {
+                semaphore.clone().acquire_owned(),
+            )
+            .await
+            {
                 Ok(Ok(permit)) => permit,
                 Ok(Err(_)) => {
                     error_log!("信号量关闭，停止测试");
@@ -238,9 +249,16 @@ impl EndpointTester {
                 debug_log!("[{}/{}] 开始测试: {}", idx_copy + 1, total, endpoint.name);
                 let start = Instant::now();
                 let result = tester.test_endpoint(&endpoint).await;
-                debug_log!("[{}/{}] 测试完成: {} - {} (耗时 {:.1}s)",
-                    idx_copy + 1, total, endpoint.name,
-                    if result.success { format!("成功 {:.0}ms", result.latency) } else { format!("失败: {}", result.error.as_deref().unwrap_or("unknown")) },
+                debug_log!(
+                    "[{}/{}] 测试完成: {} - {} (耗时 {:.1}s)",
+                    idx_copy + 1,
+                    total,
+                    endpoint.name,
+                    if result.success {
+                        format!("成功 {:.0}ms", result.latency)
+                    } else {
+                        format!("失败: {}", result.error.as_deref().unwrap_or("unknown"))
+                    },
                     start.elapsed().as_secs_f64()
                 );
                 result
@@ -257,7 +275,10 @@ impl EndpointTester {
         loop {
             // 检查总体超时
             if collect_start.elapsed() > Duration::from_secs(30) {
-                warn_log!("收集结果超时（30秒），已收集 {} 个结果，中止剩余任务", results.len());
+                warn_log!(
+                    "收集结果超时（30秒），已收集 {} 个结果，中止剩余任务",
+                    results.len()
+                );
                 join_set.abort_all();
                 break;
             }
@@ -273,7 +294,11 @@ impl EndpointTester {
             match tokio::time::timeout(Duration::from_secs(5), join_set.join_next()).await {
                 Ok(Some(Ok(result))) => {
                     results.push(result);
-                    debug_log!("已收集 {}/{} 个结果", results.len(), spawned_endpoints.len());
+                    debug_log!(
+                        "已收集 {}/{} 个结果",
+                        results.len(),
+                        spawned_endpoints.len()
+                    );
                 }
                 Ok(Some(Err(e))) => {
                     panic_count += 1;
@@ -281,7 +306,11 @@ impl EndpointTester {
                 }
                 Ok(None) => {
                     // 所有任务完成
-                    info_log!("所有任务完成，共 {} 个结果，{} 个 panic", results.len(), panic_count);
+                    info_log!(
+                        "所有任务完成，共 {} 个结果，{} 个 panic",
+                        results.len(),
+                        panic_count
+                    );
                     break;
                 }
                 Err(_) => {
@@ -292,13 +321,16 @@ impl EndpointTester {
         }
 
         // 为没有返回结果的端点（panic 或超时）创建失败记录
-        let returned_domains: std::collections::HashSet<String> = results.iter()
-            .map(|r| r.endpoint.domain.clone())
-            .collect();
+        let returned_domains: std::collections::HashSet<String> =
+            results.iter().map(|r| r.endpoint.domain.clone()).collect();
 
         for endpoint in &spawned_endpoints {
             if !returned_domains.contains(&endpoint.domain) {
-                warn_log!("端点 {} ({}) 测试异常，未返回结果", endpoint.name, endpoint.domain);
+                warn_log!(
+                    "端点 {} ({}) 测试异常，未返回结果",
+                    endpoint.name,
+                    endpoint.domain
+                );
                 results.push(EndpointResult::failure(
                     endpoint.clone(),
                     String::new(),
@@ -308,16 +340,18 @@ impl EndpointTester {
         }
 
         // Sort by latency (成功的排前面，失败的排后面)
-        results.sort_by(|a, b| {
-            match (a.success, b.success) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.latency.partial_cmp(&b.latency).unwrap_or(std::cmp::Ordering::Equal),
-            }
+        results.sort_by(|a, b| match (a.success, b.success) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a
+                .latency
+                .partial_cmp(&b.latency)
+                .unwrap_or(std::cmp::Ordering::Equal),
         });
 
         let success_count = results.iter().filter(|r| r.success).count();
-        info_log!("测速完成: {}/{} 成功, 最佳延迟: {:.0}ms",
+        info_log!(
+            "测速完成: {}/{} 成功, 最佳延迟: {:.0}ms",
             success_count,
             results.len(),
             results.first().map(|r| r.latency).unwrap_or(0.0)
@@ -328,15 +362,15 @@ impl EndpointTester {
 
     /// Test a single endpoint and find the best IP
     pub async fn test_endpoint(&self, endpoint: &Endpoint) -> EndpointResult {
-        debug_log!("test_endpoint 开始: {} ({})", endpoint.name, endpoint.domain);
+        debug_log!(
+            "test_endpoint 开始: {} ({})",
+            endpoint.name,
+            endpoint.domain
+        );
 
         if self.cancelled.load(Ordering::SeqCst) {
             warn_log!("test_endpoint: 检测到取消信号");
-            return EndpointResult::failure(
-                endpoint.clone(),
-                String::new(),
-                "已取消".into(),
-            );
+            return EndpointResult::failure(endpoint.clone(), String::new(), "已取消".into());
         }
 
         // Resolve DNS using cached resolver (with 10s timeout)
@@ -344,14 +378,19 @@ impl EndpointTester {
         let dns_start = Instant::now();
         let dns_result = tokio::time::timeout(
             Duration::from_secs(10),
-            self.resolver.lookup_ip(&endpoint.domain)
-        ).await;
+            self.resolver.lookup_ip(&endpoint.domain),
+        )
+        .await;
 
         let dns_ips: Vec<String> = match dns_result {
             Ok(Ok(lookup)) => {
                 let ips: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
-                debug_log!("  DNS 成功 ({:.1}ms): {} 个 IP - {:?}",
-                    dns_start.elapsed().as_secs_f64() * 1000.0, ips.len(), ips);
+                debug_log!(
+                    "  DNS 成功 ({:.1}ms): {} 个 IP - {:?}",
+                    dns_start.elapsed().as_secs_f64() * 1000.0,
+                    ips.len(),
+                    ips
+                );
                 ips
             }
             Ok(Err(e)) => {
@@ -364,11 +403,7 @@ impl EndpointTester {
             }
             Err(_) => {
                 error_log!("  DNS 超时 (10s)");
-                return EndpointResult::failure(
-                    endpoint.clone(),
-                    String::new(),
-                    "DNS超时".into(),
-                );
+                return EndpointResult::failure(endpoint.clone(), String::new(), "DNS超时".into());
             }
         };
 
@@ -388,7 +423,10 @@ impl EndpointTester {
             debug_log!("  原始 IP 延迟: {:.0}ms", original_result.latency);
             original_result.latency
         } else {
-            debug_log!("  原始 IP 失败: {}", original_result.error.as_deref().unwrap_or("unknown"));
+            debug_log!(
+                "  原始 IP 失败: {}",
+                original_result.error.as_deref().unwrap_or("unknown")
+            );
             9999.0
         };
 
@@ -402,7 +440,11 @@ impl EndpointTester {
         let test_ips: Vec<String> = if is_cf {
             let mut ips = self.get_cf_ips().await;
             ips.extend(dns_ips.clone());
-            ips.into_iter().collect::<std::collections::HashSet<_>>().into_iter().take(15).collect()
+            ips.into_iter()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .take(15)
+                .collect()
         } else {
             dns_ips.clone()
         };
@@ -415,9 +457,7 @@ impl EndpointTester {
             let ep = endpoint.clone();
             let tester = self.clone();
             let ip_clone = ip.clone();
-            join_set.spawn(async move {
-                tester.test_single_ip(&ep, ip_clone).await
-            });
+            join_set.spawn(async move { tester.test_single_ip(&ep, ip_clone).await });
         }
 
         // Collect results with 15s total timeout for all IP tests
@@ -444,14 +484,24 @@ impl EndpointTester {
             match tokio::time::timeout(Duration::from_secs(3), join_set.join_next()).await {
                 Ok(Some(Ok(result))) => {
                     if result.success {
-                        if best_result.is_none() || result.latency < best_result.as_ref().unwrap().latency {
-                            debug_log!("    IP {} 延迟 {:.0}ms (新最优)", result.ip, result.latency);
+                        if best_result.is_none()
+                            || result.latency < best_result.as_ref().unwrap().latency
+                        {
+                            debug_log!(
+                                "    IP {} 延迟 {:.0}ms (新最优)",
+                                result.ip,
+                                result.latency
+                            );
                             best_result = Some(result);
                         } else {
                             debug_log!("    IP {} 延迟 {:.0}ms", result.ip, result.latency);
                         }
                     } else {
-                        debug_log!("    IP {} 失败: {}", result.ip, result.error.as_deref().unwrap_or("unknown"));
+                        debug_log!(
+                            "    IP {} 失败: {}",
+                            result.ip,
+                            result.error.as_deref().unwrap_or("unknown")
+                        );
                     }
                 }
                 Ok(Some(Err(e))) => {
@@ -471,8 +521,13 @@ impl EndpointTester {
 
         // 使用带比较功能的构造函数创建最终结果
         let final_result = if let Some(best) = best_result {
-            info_log!("  端点 {} 最优 IP: {} ({:.0}ms, 原 {:.0}ms)",
-                endpoint.name, best.ip, best.latency, original_latency);
+            info_log!(
+                "  端点 {} 最优 IP: {} ({:.0}ms, 原 {:.0}ms)",
+                endpoint.name,
+                best.ip,
+                best.latency,
+                original_latency
+            );
             EndpointResult::success_with_comparison(
                 endpoint.clone(),
                 best.ip,
@@ -482,8 +537,12 @@ impl EndpointTester {
             )
         } else if original_result.success {
             // 如果优化 IP 都失败，但原始 IP 成功，使用原始 IP
-            info_log!("  端点 {} 使用原始 IP: {} ({:.0}ms)",
-                endpoint.name, original_result.ip, original_result.latency);
+            info_log!(
+                "  端点 {} 使用原始 IP: {} ({:.0}ms)",
+                endpoint.name,
+                original_result.ip,
+                original_result.latency
+            );
             EndpointResult::success_with_comparison(
                 endpoint.clone(),
                 original_result.ip.clone(),
@@ -524,7 +583,11 @@ impl EndpointTester {
 
         // TLS handshake using reusable connector
         let connector = self.tls_connector.clone();
-        let domain = endpoint.domain.clone().try_into().map_err(|_| "Invalid domain")?;
+        let domain = endpoint
+            .domain
+            .clone()
+            .try_into()
+            .map_err(|_| "Invalid domain")?;
 
         let mut tls_stream = connector
             .connect(domain, stream)
@@ -552,7 +615,10 @@ impl EndpointTester {
             // Sanitize: remove CR/LF characters to prevent HTTP header injection
             // This is a security measure against CRLF injection attacks
             if raw_path.contains('\r') || raw_path.contains('\n') {
-                warn_log!("  警告: URL 路径包含非法字符 (CRLF)，已过滤: {}", endpoint.url);
+                warn_log!(
+                    "  警告: URL 路径包含非法字符 (CRLF)，已过滤: {}",
+                    endpoint.url
+                );
                 raw_path
                     .chars()
                     .filter(|c| *c != '\r' && *c != '\n')
@@ -635,8 +701,8 @@ mod tests {
         assert!(!is_cloudflare_ip("8.8.8.8"));
         assert!(!is_cloudflare_ip("192.168.1.1"));
         assert!(!is_cloudflare_ip("10.0.0.1"));
-        assert!(!is_cloudflare_ip("104.15.0.1"));  // Close but not CF
-        assert!(!is_cloudflare_ip("104.28.0.1"));  // Close but not CF
+        assert!(!is_cloudflare_ip("104.15.0.1")); // Close but not CF
+        assert!(!is_cloudflare_ip("104.28.0.1")); // Close but not CF
     }
 
     #[test]

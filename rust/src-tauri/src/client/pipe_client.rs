@@ -9,8 +9,7 @@ use thiserror::Error;
 use windows::core::PCSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileA, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE,
-    OPEN_EXISTING,
+    CreateFileA, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE, OPEN_EXISTING,
 };
 use windows::Win32::System::Pipes::{
     SetNamedPipeHandleState, WaitNamedPipeA, PIPE_READMODE_MESSAGE,
@@ -63,9 +62,8 @@ impl PipeClient {
         let pipe_name = format!("{}\0", PIPE_NAME);
 
         // Wait for the pipe to become available
-        let available = unsafe {
-            WaitNamedPipeA(PCSTR::from_raw(pipe_name.as_ptr()), CONNECT_TIMEOUT_MS)
-        };
+        let available =
+            unsafe { WaitNamedPipeA(PCSTR::from_raw(pipe_name.as_ptr()), CONNECT_TIMEOUT_MS) };
 
         if available.is_err() {
             let err = std::io::Error::last_os_error();
@@ -101,9 +99,7 @@ impl PipeClient {
 
         // Set message mode
         let mode = PIPE_READMODE_MESSAGE;
-        let result = unsafe {
-            SetNamedPipeHandleState(handle, Some(&mode), None, None)
-        };
+        let result = unsafe { SetNamedPipeHandleState(handle, Some(&mode), None, None) };
 
         if result.is_err() {
             unsafe { CloseHandle(handle) }.ok();
@@ -114,7 +110,11 @@ impl PipeClient {
     }
 
     /// Send a request and receive response
-    fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, PipeClientError> {
+    fn call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, PipeClientError> {
         let handle = self.connect()?;
 
         // Ensure handle is closed on exit
@@ -126,9 +126,8 @@ impl PipeClient {
 
         // Write request
         let mut bytes_written: u32 = 0;
-        let write_result = unsafe {
-            WriteFile(handle, Some(&request_json), Some(&mut bytes_written), None)
-        };
+        let write_result =
+            unsafe { WriteFile(handle, Some(&request_json), Some(&mut bytes_written), None) };
 
         if write_result.is_err() {
             return Err(PipeClientError::Io(std::io::Error::last_os_error()));
@@ -137,9 +136,8 @@ impl PipeClient {
         // Read response
         let mut buffer = vec![0u8; BUFFER_SIZE];
         let mut bytes_read: u32 = 0;
-        let read_result = unsafe {
-            ReadFile(handle, Some(&mut buffer), Some(&mut bytes_read), None)
-        };
+        let read_result =
+            unsafe { ReadFile(handle, Some(&mut buffer), Some(&mut bytes_read), None) };
 
         if read_result.is_err() {
             return Err(PipeClientError::Io(std::io::Error::last_os_error()));

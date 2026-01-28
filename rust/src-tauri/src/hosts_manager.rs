@@ -124,7 +124,8 @@ impl ParsedHosts {
                 after_block.push(line.to_string());
             } else {
                 // Also check for legacy line-level markers (for backward compatibility)
-                if trimmed.contains(MARKER_LINE) && !trimmed.is_empty() && !trimmed.starts_with('#') {
+                if trimmed.contains(MARKER_LINE) && !trimmed.is_empty() && !trimmed.starts_with('#')
+                {
                     let parts: Vec<&str> = trimmed.split_whitespace().collect();
                     if parts.len() >= 2 {
                         anyrouter_bindings.insert(parts[1].to_string(), parts[0].to_string());
@@ -230,7 +231,7 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), HostsError> {
 
         temp_file.write_all(content.as_bytes())?;
         temp_file.flush()?;
-        temp_file.sync_all()?;  // fsync to ensure data is on disk
+        temp_file.sync_all()?; // fsync to ensure data is on disk
     }
 
     // Atomic rename
@@ -309,7 +310,9 @@ impl HostsManager {
         let mut parsed = ParsedHosts::parse(&content);
 
         // Update or add binding
-        parsed.anyrouter_bindings.insert(domain.to_string(), ip.to_string());
+        parsed
+            .anyrouter_bindings
+            .insert(domain.to_string(), ip.to_string());
 
         // Generate new content
         let new_content = parsed.to_string();
@@ -328,7 +331,10 @@ impl HostsManager {
     }
 
     /// Internal: batch write to custom path (for testing)
-    fn write_bindings_batch_to_path(path: &Path, bindings: &[HostsBinding]) -> Result<usize, HostsError> {
+    fn write_bindings_batch_to_path(
+        path: &Path,
+        bindings: &[HostsBinding],
+    ) -> Result<usize, HostsError> {
         if bindings.is_empty() {
             return Ok(0);
         }
@@ -362,7 +368,9 @@ impl HostsManager {
         // Update bindings
         let mut updated_count = 0;
         for binding in bindings {
-            parsed.anyrouter_bindings.insert(binding.domain.clone(), binding.ip.clone());
+            parsed
+                .anyrouter_bindings
+                .insert(binding.domain.clone(), binding.ip.clone());
             updated_count += 1;
         }
 
@@ -555,7 +563,8 @@ mod tests {
     #[test]
     fn test_read_binding_found_in_block() {
         let dir = TempDir::new().unwrap();
-        let content = "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.2.3.4\ttest.com\t# anyFAST\n# END anyFAST";
+        let content =
+            "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.2.3.4\ttest.com\t# anyFAST\n# END anyFAST";
         let path = create_hosts_file(&dir, content);
         let manager = TestableHostsManager::new(path);
 
@@ -594,7 +603,8 @@ mod tests {
     #[test]
     fn test_write_binding_update_existing() {
         let dir = TempDir::new().unwrap();
-        let content = "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.1.1.1\ttest.com\t# anyFAST\n# END anyFAST";
+        let content =
+            "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.1.1.1\ttest.com\t# anyFAST\n# END anyFAST";
         let path = create_hosts_file(&dir, content);
         let manager = TestableHostsManager::new(path.clone());
 
@@ -613,8 +623,14 @@ mod tests {
         let manager = TestableHostsManager::new(path.clone());
 
         let bindings = vec![
-            HostsBinding { domain: "test1.com".into(), ip: "1.1.1.1".into() },
-            HostsBinding { domain: "test2.com".into(), ip: "2.2.2.2".into() },
+            HostsBinding {
+                domain: "test1.com".into(),
+                ip: "1.1.1.1".into(),
+            },
+            HostsBinding {
+                domain: "test2.com".into(),
+                ip: "2.2.2.2".into(),
+            },
         ];
 
         let count = manager.write_bindings_batch(&bindings).unwrap();
@@ -641,7 +657,8 @@ mod tests {
     #[test]
     fn test_clear_binding() {
         let dir = TempDir::new().unwrap();
-        let content = "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.2.3.4\ttest.com\t# anyFAST\n# END anyFAST";
+        let content =
+            "127.0.0.1\tlocalhost\n# BEGIN anyFAST\n1.2.3.4\ttest.com\t# anyFAST\n# END anyFAST";
         let path = create_hosts_file(&dir, content);
         let manager = TestableHostsManager::new(path.clone());
 
@@ -659,7 +676,9 @@ mod tests {
         let path = create_hosts_file(&dir, content);
         let manager = TestableHostsManager::new(path.clone());
 
-        let count = manager.clear_bindings_batch(&["test1.com", "test2.com"]).unwrap();
+        let count = manager
+            .clear_bindings_batch(&["test1.com", "test2.com"])
+            .unwrap();
         assert_eq!(count, 2);
 
         let result = fs::read_to_string(&path).unwrap();

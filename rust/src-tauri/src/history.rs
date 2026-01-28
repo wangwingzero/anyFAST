@@ -126,7 +126,10 @@ impl HistoryManager {
             .collect();
 
         let avg_speedup_percent = if !speedup_records.is_empty() {
-            speedup_records.iter().map(|r| r.speedup_percent).sum::<f64>()
+            speedup_records
+                .iter()
+                .map(|r| r.speedup_percent)
+                .sum::<f64>()
                 / speedup_records.len() as f64
         } else {
             0.0

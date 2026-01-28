@@ -62,9 +62,21 @@ impl EndpointResult {
 
         Self {
             endpoint,
-            ip: if use_original { original_ip.clone() } else { ip },
-            latency: if use_original { original_latency } else { latency },
-            ttfb: if use_original { original_latency } else { latency },
+            ip: if use_original {
+                original_ip.clone()
+            } else {
+                ip
+            },
+            latency: if use_original {
+                original_latency
+            } else {
+                latency
+            },
+            ttfb: if use_original {
+                original_latency
+            } else {
+                latency
+            },
             success: true,
             error: None,
             original_ip,
@@ -170,14 +182,30 @@ impl Default for AppConfig {
     }
 }
 
-fn default_mode() -> String { "auto".into() }
-fn default_check_interval() -> u64 { 30 }      // 30秒检查间隔
-fn default_slow_threshold() -> u32 { 50 }       // 比基准慢50%触发切换
-fn default_failure_threshold() -> u32 { 3 }     // 连续3次失败触发切换
-fn default_test_count() -> u32 { 3 }
-fn default_minimize() -> bool { true }
-fn default_close_to_tray() -> bool { true }    // 关闭按钮最小化到托盘
-fn default_clear_on_exit() -> bool { false }   // 退出时清除 hosts 绑定（默认关闭）
+fn default_mode() -> String {
+    "auto".into()
+}
+fn default_check_interval() -> u64 {
+    30
+} // 30秒检查间隔
+fn default_slow_threshold() -> u32 {
+    50
+} // 比基准慢50%触发切换
+fn default_failure_threshold() -> u32 {
+    3
+} // 连续3次失败触发切换
+fn default_test_count() -> u32 {
+    3
+}
+fn default_minimize() -> bool {
+    true
+}
+fn default_close_to_tray() -> bool {
+    true
+} // 关闭按钮最小化到托盘
+fn default_clear_on_exit() -> bool {
+    false
+} // 退出时清除 hosts 绑定（默认关闭）
 
 fn default_endpoints() -> Vec<Endpoint> {
     vec![
@@ -262,7 +290,7 @@ mod tests {
         );
 
         assert!(result.success);
-        assert_eq!(result.ip, "1.2.3.4");  // Should use optimized IP
+        assert_eq!(result.ip, "1.2.3.4"); // Should use optimized IP
         assert_eq!(result.latency, 100.0);
         assert_eq!(result.original_ip, "5.6.7.8");
         assert_eq!(result.original_latency, 200.0);
@@ -288,8 +316,8 @@ mod tests {
         );
 
         assert!(result.success);
-        assert_eq!(result.ip, "5.6.7.8");  // Should use original IP
-        assert_eq!(result.latency, 100.0);  // Should use original latency
+        assert_eq!(result.ip, "5.6.7.8"); // Should use original IP
+        assert_eq!(result.latency, 100.0); // Should use original latency
         assert!(result.use_original);
     }
 
@@ -325,7 +353,7 @@ mod tests {
         assert_eq!(config.test_count, 3);
         assert!(config.minimize_to_tray);
         assert!(config.close_to_tray);
-        assert!(!config.clear_on_exit);  // 默认关闭
+        assert!(!config.clear_on_exit); // 默认关闭
         assert!(config.cloudflare_ips.is_empty());
         assert_eq!(config.endpoints.len(), 2);
     }

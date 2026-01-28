@@ -161,7 +161,8 @@ fn install_service() -> Result<(), Box<dyn std::error::Error>> {
         service_manager::{ServiceManager, ServiceManagerAccess},
     };
 
-    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)?;
+    let manager =
+        ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)?;
 
     let service_binary_path = std::env::current_exe()?;
 

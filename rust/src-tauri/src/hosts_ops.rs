@@ -67,7 +67,10 @@ pub fn write_binding(domain: &str, ip: &str) -> Result<(), HostsError> {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     // Service failed - mark unavailable and fall back to direct
-                    eprintln!("Service write_binding failed, falling back to direct: {}", e);
+                    eprintln!(
+                        "Service write_binding failed, falling back to direct: {}",
+                        e
+                    );
                     mark_service_unavailable();
                     // Fall through to direct operation
                 }
@@ -97,7 +100,10 @@ pub fn write_bindings_batch(bindings: &[HostsBinding]) -> Result<usize, HostsErr
                 Ok(count) => return Ok(count as usize),
                 Err(e) => {
                     // Service failed - mark unavailable and fall back to direct
-                    eprintln!("Service write_bindings_batch failed, falling back to direct: {}", e);
+                    eprintln!(
+                        "Service write_bindings_batch failed, falling back to direct: {}",
+                        e
+                    );
                     mark_service_unavailable();
                     // Fall through to direct operation
                 }
@@ -119,7 +125,10 @@ pub fn clear_binding(domain: &str) -> Result<(), HostsError> {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     // Service failed - mark unavailable and fall back to direct
-                    eprintln!("Service clear_binding failed, falling back to direct: {}", e);
+                    eprintln!(
+                        "Service clear_binding failed, falling back to direct: {}",
+                        e
+                    );
                     mark_service_unavailable();
                     // Fall through to direct operation
                 }
@@ -143,7 +152,10 @@ pub fn clear_bindings_batch(domains: &[&str]) -> Result<usize, HostsError> {
                 Ok(count) => return Ok(count as usize),
                 Err(e) => {
                     // Service failed - mark unavailable and fall back to direct
-                    eprintln!("Service clear_bindings_batch failed, falling back to direct: {}", e);
+                    eprintln!(
+                        "Service clear_bindings_batch failed, falling back to direct: {}",
+                        e
+                    );
                     mark_service_unavailable();
                     // Fall through to direct operation
                 }
@@ -208,9 +220,7 @@ pub fn get_permission_status() -> (bool, bool) {
         use std::process::Command;
         let output = Command::new("id").arg("-u").output();
         let has_root = match output {
-            Ok(out) => {
-                String::from_utf8_lossy(&out.stdout).trim() == "0"
-            }
+            Ok(out) => String::from_utf8_lossy(&out.stdout).trim() == "0",
             Err(_) => false,
         };
         (has_root, false)

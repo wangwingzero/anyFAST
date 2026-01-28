@@ -21,14 +21,15 @@ use endpoint_tester::EndpointTester;
 use health_checker::{HealthChecker, HealthStatus};
 use history::HistoryManager;
 use hosts_manager::HostsBinding;
-use models::{AppConfig, Endpoint, EndpointResult, HistoryRecord, HistoryStats, PermissionStatus, UpdateInfo};
+use models::{
+    AppConfig, Endpoint, EndpointResult, HistoryRecord, HistoryStats, PermissionStatus, UpdateInfo,
+};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
-    AppHandle, Manager, State,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    WindowEvent,
+    AppHandle, Manager, State, WindowEvent,
 };
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -50,7 +51,10 @@ async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
 
 #[tauri::command]
 async fn save_config(state: State<'_, AppState>, config: AppConfig) -> Result<(), String> {
-    state.config_manager.save(&config).map_err(|e| e.to_string())
+    state
+        .config_manager
+        .save(&config)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -72,10 +76,8 @@ async fn start_speed_test(state: State<'_, AppState>) -> Result<Vec<EndpointResu
 
     // 使用全局超时（60秒）防止永久卡住
     let test_future = tester.test_all(&endpoints);
-    let results = match tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        test_future
-    ).await {
+    let results = match tokio::time::timeout(std::time::Duration::from_secs(60), test_future).await
+    {
         Ok(results) => results,
         Err(_) => {
             // 超时，取消测试
@@ -319,7 +321,10 @@ async fn open_hosts_file() -> Result<(), String> {
 
 #[tauri::command]
 async fn get_history_stats(state: State<'_, AppState>, hours: u32) -> Result<HistoryStats, String> {
-    state.history_manager.get_stats(hours).map_err(|e| e.to_string())
+    state
+        .history_manager
+        .get_stats(hours)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -330,10 +335,7 @@ async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 // ===== 自动模式命令 =====
 
 #[tauri::command]
-async fn start_auto_mode(
-    state: State<'_, AppState>,
-    app_handle: AppHandle,
-) -> Result<(), String> {
+async fn start_auto_mode(state: State<'_, AppState>, app_handle: AppHandle) -> Result<(), String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
 
     if config.mode != "auto" {
@@ -452,7 +454,10 @@ async fn check_for_update() -> Result<UpdateInfo, String> {
     let release_notes = release["body"].as_str().unwrap_or("").to_string();
     let release_url = release["html_url"]
         .as_str()
-        .unwrap_or(&format!("https://github.com/{}/releases/latest", GITHUB_REPO))
+        .unwrap_or(&format!(
+            "https://github.com/{}/releases/latest",
+            GITHUB_REPO
+        ))
         .to_string();
     let published_at = release["published_at"].as_str().unwrap_or("").to_string();
 
@@ -471,11 +476,8 @@ async fn check_for_update() -> Result<UpdateInfo, String> {
 
 /// 比较版本号，返回 true 如果 latest > current
 fn compare_versions(latest: &str, current: &str) -> bool {
-    let parse_version = |v: &str| -> Vec<u32> {
-        v.split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect()
-    };
+    let parse_version =
+        |v: &str| -> Vec<u32> { v.split('.').filter_map(|s| s.parse().ok()).collect() };
 
     let latest_parts = parse_version(latest);
     let current_parts = parse_version(current);
@@ -504,14 +506,14 @@ fn get_current_version() -> String {
 async fn restart_as_admin() -> Result<(), String> {
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
         use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
         use windows::core::PCWSTR;
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-        let exe_path = std::env::current_exe()
-            .map_err(|e| format!("Failed to get exe path: {}", e))?;
+        let exe_path =
+            std::env::current_exe().map_err(|e| format!("Failed to get exe path: {}", e))?;
 
         let exe_str: Vec<u16> = OsStr::new(exe_path.as_os_str())
             .encode_wide()
@@ -595,7 +597,9 @@ pub fn run() {
                             if let Some(state) = app.try_state::<AppState>() {
                                 if let Ok(config) = state.config_manager.load() {
                                     if config.clear_on_exit {
-                                        let domains: Vec<&str> = config.endpoints.iter()
+                                        let domains: Vec<&str> = config
+                                            .endpoints
+                                            .iter()
                                             .map(|e| e.domain.as_str())
                                             .collect();
                                         let _ = hosts_ops::clear_bindings_batch(&domains);
@@ -610,7 +614,12 @@ pub fn run() {
                 })
                 .on_tray_icon_event(|tray, event| {
                     // 左键点击托盘图标显示窗口
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
                         if let Some(window) = tray.app_handle().get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();

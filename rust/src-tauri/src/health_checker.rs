@@ -30,8 +30,8 @@ pub struct HealthStatus {
 pub struct EndpointHealth {
     pub domain: String,
     pub current_ip: Option<String>,
-    pub best_ip: Option<String>,        // 当前最优 IP
-    pub best_latency: f64,              // 最优 IP 的延迟
+    pub best_ip: Option<String>, // 当前最优 IP
+    pub best_latency: f64,       // 最优 IP 的延迟
     pub latency: f64,
     pub baseline_latency: f64,
     pub consecutive_failures: u32,
@@ -90,11 +90,7 @@ impl HealthChecker {
     }
 
     /// 启动后台健康检查（在内部 spawn 任务，立即返回）
-    pub fn start(
-        &self,
-        app_handle: AppHandle,
-        config: AppConfig,
-    ) {
+    pub fn start(&self, app_handle: AppHandle, config: AppConfig) {
         let cancel_token = self.cancel_token.clone();
         let status = self.status.clone();
         let baselines = self.baselines.clone();
@@ -106,11 +102,7 @@ impl HealthChecker {
         let cloudflare_ips = config.cloudflare_ips.clone();
 
         // 获取启用的端点
-        let endpoints: Vec<Endpoint> = config
-            .endpoints
-            .into_iter()
-            .filter(|e| e.enabled)
-            .collect();
+        let endpoints: Vec<Endpoint> = config.endpoints.into_iter().filter(|e| e.enabled).collect();
 
         if endpoints.is_empty() {
             return;

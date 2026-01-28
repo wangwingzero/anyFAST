@@ -16,25 +16,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use windows::core::{PCSTR, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
-use windows::Win32::Security::{
-    PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
-};
 use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows::Win32::Storage::FileSystem::{
-    FlushFileBuffers, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE,
-    FILE_FLAG_OVERLAPPED,
-};
-use windows::Win32::System::IO::{
-    GetOverlappedResult, OVERLAPPED,
+    FlushFileBuffers, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
 };
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeA, DisconnectNamedPipe,
-    PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE,
-    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeA, DisconnectNamedPipe, PIPE_READMODE_MESSAGE,
+    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
-use windows::Win32::System::Threading::{
-    CreateEventA, SetEvent, WaitForSingleObject,
-};
+use windows::Win32::System::Threading::{CreateEventA, SetEvent, WaitForSingleObject};
+use windows::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
 
 /// Named Pipe path for the hosts service
 pub const PIPE_NAME: &str = r"\\.\pipe\anyfast-hosts-service";
@@ -84,7 +76,8 @@ impl PipeServer {
                 false, // Initial state: not signaled
                 None,  // No name
             )
-        }.unwrap_or(INVALID_HANDLE_VALUE);
+        }
+        .unwrap_or(INVALID_HANDLE_VALUE);
 
         Self {
             running: Arc::new(AtomicBool::new(false)),
@@ -93,9 +86,13 @@ impl PipeServer {
     }
 
     /// Create security attributes that restrict access to Administrators only
-    fn create_admin_security_attributes() -> Result<(SECURITY_ATTRIBUTES, PSECURITY_DESCRIPTOR), String> {
+    fn create_admin_security_attributes(
+    ) -> Result<(SECURITY_ATTRIBUTES, PSECURITY_DESCRIPTOR), String> {
         // Convert SDDL string to security descriptor
-        let sddl_wide: Vec<u16> = PIPE_ACCESS_SDDL.encode_utf16().chain(std::iter::once(0)).collect();
+        let sddl_wide: Vec<u16> = PIPE_ACCESS_SDDL
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
         let mut sd_ptr: PSECURITY_DESCRIPTOR = PSECURITY_DESCRIPTOR(ptr::null_mut());
 
@@ -139,14 +136,19 @@ impl PipeServer {
                 CreateNamedPipeA(
                     PCSTR::from_raw(pipe_name.as_ptr()),
                     windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(
-                        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE.0 | FILE_FLAG_OVERLAPPED.0,
+                        PIPE_ACCESS_DUPLEX
+                            | FILE_FLAG_FIRST_PIPE_INSTANCE.0
+                            | FILE_FLAG_OVERLAPPED.0,
                     ),
                     // PIPE_REJECT_REMOTE_CLIENTS prevents network access
-                    PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                    PIPE_TYPE_MESSAGE
+                        | PIPE_READMODE_MESSAGE
+                        | PIPE_WAIT
+                        | PIPE_REJECT_REMOTE_CLIENTS,
                     PIPE_UNLIMITED_INSTANCES,
                     BUFFER_SIZE,
                     BUFFER_SIZE,
-                    0, // Default timeout
+                    0,                     // Default timeout
                     Some(&security_attrs), // Admin-only security
                 )
             };
@@ -206,9 +208,8 @@ impl PipeServer {
     /// Wait for client connection with cancellation support
     fn wait_for_connection(&self, pipe: HANDLE) -> Result<bool, String> {
         // Create event for overlapped connect
-        let connect_event = unsafe {
-            CreateEventA(None, true, false, None)
-        }.map_err(|e| format!("Failed to create event: {}", e))?;
+        let connect_event = unsafe { CreateEventA(None, true, false, None) }
+            .map_err(|e| format!("Failed to create event: {}", e))?;
 
         let mut overlapped = OVERLAPPED {
             hEvent: connect_event,
@@ -243,8 +244,7 @@ impl PipeServer {
             // Wait with timeout to check running flag periodically
             let wait_result = unsafe {
                 windows::Win32::System::Threading::WaitForMultipleObjects(
-                    &handles,
-                    false, // Wait for any
+                    &handles, false, // Wait for any
                     1000,  // 1 second timeout
                 )
             };
@@ -298,9 +298,8 @@ impl PipeServer {
         let mut buffer = vec![0u8; BUFFER_SIZE as usize];
 
         // Create event for overlapped I/O
-        let io_event = unsafe {
-            CreateEventA(None, true, false, None)
-        }.map_err(|e| format!("Failed to create IO event: {}", e))?;
+        let io_event = unsafe { CreateEventA(None, true, false, None) }
+            .map_err(|e| format!("Failed to create IO event: {}", e))?;
 
         let _event_guard = HandleGuard(io_event);
 
@@ -336,9 +335,7 @@ impl PipeServer {
                     let handles = [io_event, self.stop_event];
                     let wait_result = unsafe {
                         windows::Win32::System::Threading::WaitForMultipleObjects(
-                            &handles,
-                            false,
-                            30000, // 30 second timeout for read
+                            &handles, false, 30000, // 30 second timeout for read
                         )
                     };
 
@@ -351,7 +348,9 @@ impl PipeServer {
                             if get_result.is_err() {
                                 let err = std::io::Error::last_os_error();
                                 // ERROR_BROKEN_PIPE or ERROR_PIPE_NOT_CONNECTED
-                                if err.raw_os_error() == Some(109) || err.raw_os_error() == Some(233) {
+                                if err.raw_os_error() == Some(109)
+                                    || err.raw_os_error() == Some(233)
+                                {
                                     return Ok(()); // Client disconnected
                                 }
                                 return Err(format!("GetOverlappedResult error: {}", err));
@@ -367,7 +366,10 @@ impl PipeServer {
                             return Ok(());
                         }
                         _ => {
-                            return Err(format!("Read wait failed: {}", std::io::Error::last_os_error()));
+                            return Err(format!(
+                                "Read wait failed: {}",
+                                std::io::Error::last_os_error()
+                            ));
                         }
                     }
                 } else if err_code == 109 || err_code == 233 {
@@ -399,7 +401,8 @@ impl PipeServer {
             // Validate response size
             if response_json.len() > BUFFER_SIZE as usize {
                 eprintln!("Response too large: {} bytes", response_json.len());
-                let error_response = RpcResponse::error(0, error_codes::INTERNAL_ERROR, "Response too large");
+                let error_response =
+                    RpcResponse::error(0, error_codes::INTERNAL_ERROR, "Response too large");
                 let error_json = serde_json::to_vec(&error_response).unwrap_or_default();
                 self.write_response(pipe, &error_json, io_event)?;
                 continue;
@@ -436,9 +439,8 @@ impl PipeServer {
                 if wait_result != WAIT_OBJECT_0 {
                     return Err("Write timeout".to_string());
                 }
-                unsafe {
-                    GetOverlappedResult(pipe, &overlapped, &mut bytes_written, false)
-                }.map_err(|_| format!("Write error: {}", std::io::Error::last_os_error()))?;
+                unsafe { GetOverlappedResult(pipe, &overlapped, &mut bytes_written, false) }
+                    .map_err(|_| format!("Write error: {}", std::io::Error::last_os_error()))?;
             } else {
                 return Err(format!("Write error: {}", err));
             }
@@ -454,7 +456,11 @@ impl PipeServer {
         let request: RpcRequest = match serde_json::from_slice(data) {
             Ok(req) => req,
             Err(e) => {
-                return RpcResponse::error(0, error_codes::PARSE_ERROR, &format!("Parse error: {}", e));
+                return RpcResponse::error(
+                    0,
+                    error_codes::PARSE_ERROR,
+                    &format!("Parse error: {}", e),
+                );
             }
         };
 
@@ -541,7 +547,9 @@ impl PipeServer {
 
         match HostsManager::write_bindings_batch(&bindings) {
             Ok(count) => {
-                let result = CountResult { count: count as u32 };
+                let result = CountResult {
+                    count: count as u32,
+                };
                 RpcResponse::success(id, serde_json::to_value(result).unwrap())
             }
             Err(e) => self.hosts_error_to_response(id, e),
@@ -585,7 +593,9 @@ impl PipeServer {
 
         match HostsManager::clear_bindings_batch(&domains) {
             Ok(count) => {
-                let result = CountResult { count: count as u32 };
+                let result = CountResult {
+                    count: count as u32,
+                };
                 RpcResponse::success(id, serde_json::to_value(result).unwrap())
             }
             Err(e) => self.hosts_error_to_response(id, e),
