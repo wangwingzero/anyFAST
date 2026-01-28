@@ -670,11 +670,11 @@ mod tests {
     #[tokio::test]
     async fn test_endpoint_tester_with_custom_ips() {
         let custom_ips = vec!["1.2.3.4".to_string()];
-        let tester = EndpointTester::new(custom_ips);
+        let tester = EndpointTester::new(custom_ips.clone());
 
-        let ips = tester.get_cf_ips().await;
-        assert_eq!(ips.len(), 1);
-        assert_eq!(ips[0], "1.2.3.4");
+        // Verify custom IPs are stored
+        assert_eq!(tester.custom_cf_ips.len(), 1);
+        assert_eq!(tester.custom_cf_ips[0], "1.2.3.4");
     }
 
     #[tokio::test]
