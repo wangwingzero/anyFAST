@@ -446,22 +446,13 @@ function ResultRow({
           : 'text-apple-red'
     : 'text-apple-red'
 
-  // 加速效果显示
+  // 加速效果显示（始终和原始 DNS IP 对比）
   const renderSpeedupBadge = () => {
     if (!result?.success) return null
 
     // 如果没有原始延迟数据（旧数据兼容）
     if (!result.original_latency || result.original_latency <= 0) {
       return <span className="text-apple-gray-400 text-xs">-</span>
-    }
-
-    if (result.use_original) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-gray-200 text-apple-gray-500 text-xs">
-          <Minus className="w-3 h-3" />
-          原始最优
-        </span>
-      )
     }
 
     if (result.speedup_percent > 0) {
@@ -474,14 +465,22 @@ function ResultRow({
           ↑ {result.speedup_percent.toFixed(0)}%
         </span>
       )
-    } else {
+    } else if (result.speedup_percent < 0) {
       return (
         <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-red/10 text-apple-red text-xs"
-          title={`原始延迟: ${result.original_latency.toFixed(0)}ms → 优化延迟: ${result.latency.toFixed(0)}ms`}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-orange/10 text-apple-orange text-xs"
+          title={`原始延迟: ${result.original_latency.toFixed(0)}ms → 当前延迟: ${result.latency.toFixed(0)}ms`}
         >
           <TrendingDown className="w-3 h-3" />
           ↓ {Math.abs(result.speedup_percent).toFixed(0)}%
+        </span>
+      )
+    } else {
+      // 加速效果为 0%（和原始一样快）
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-gray-200 text-apple-gray-500 text-xs">
+          <Minus className="w-3 h-3" />
+          0%
         </span>
       )
     }

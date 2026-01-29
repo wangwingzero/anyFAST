@@ -53,30 +53,22 @@ impl EndpointResult {
         original_ip: String,
         original_latency: f64,
     ) -> Self {
+        // 计算加速百分比（始终和原始 DNS IP 对比）
         let speedup_percent = if original_latency > 0.0 && latency < 9999.0 {
             (original_latency - latency) / original_latency * 100.0
         } else {
             0.0
         };
-        let use_original = speedup_percent <= 0.0;
+        
+        // 始终使用测试中最快的 IP，不回退到原始 IP
+        // use_original 仅用于标记当前使用的 IP 是否恰好是原始 IP
+        let use_original = ip == original_ip;
 
         Self {
             endpoint,
-            ip: if use_original {
-                original_ip.clone()
-            } else {
-                ip
-            },
-            latency: if use_original {
-                original_latency
-            } else {
-                latency
-            },
-            ttfb: if use_original {
-                original_latency
-            } else {
-                latency
-            },
+            ip,      // 始终使用传入的最优 IP
+            latency, // 始终使用传入的最优延迟
+            ttfb: latency,
             success: true,
             error: None,
             original_ip,
