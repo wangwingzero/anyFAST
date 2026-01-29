@@ -421,7 +421,7 @@ mod tests {
             enabled: true,
         };
         let endpoint_result = EndpointResult::success(ep, "1.2.3.4".into(), 100.0);
-        
+
         let workflow_result = WorkflowResult {
             test_count: 2,
             success_count: 1,
@@ -444,7 +444,7 @@ mod tests {
             enabled: true,
         };
         let endpoint_result = EndpointResult::success(ep, "1.2.3.4".into(), 100.0);
-        
+
         let workflow_result = WorkflowResult {
             test_count: 2,
             success_count: 1,
@@ -457,7 +457,7 @@ mod tests {
         assert!(json.contains("testCount"));
         assert!(json.contains("successCount"));
         assert!(json.contains("appliedCount"));
-        
+
         let parsed: WorkflowResult = serde_json::from_str(&json).unwrap();
         assert_eq!(workflow_result.test_count, parsed.test_count);
         assert_eq!(workflow_result.success_count, parsed.success_count);
@@ -470,11 +470,11 @@ mod tests {
         // Test with autostart = true
         let mut config = AppConfig::default();
         config.autostart = true;
-        
+
         let json = serde_json::to_string(&config).unwrap();
         let parsed: AppConfig = serde_json::from_str(&json).unwrap();
         assert!(parsed.autostart);
-        
+
         // Test with autostart = false (default)
         let config2 = AppConfig::default();
         let json2 = serde_json::to_string(&config2).unwrap();

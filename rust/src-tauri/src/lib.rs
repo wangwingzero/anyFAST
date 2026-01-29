@@ -422,7 +422,12 @@ async fn start_workflow(
 ) -> Result<WorkflowResult, String> {
     // Step 1: 加载配置并获取启用的端点 (Requirement 3.1)
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
-    let endpoints: Vec<Endpoint> = config.endpoints.iter().filter(|e| e.enabled).cloned().collect();
+    let endpoints: Vec<Endpoint> = config
+        .endpoints
+        .iter()
+        .filter(|e| e.enabled)
+        .cloned()
+        .collect();
 
     if endpoints.is_empty() {
         return Err("没有启用的端点".into());
@@ -746,8 +751,8 @@ async fn set_autostart(enabled: bool) -> Result<(), String> {
 
         if enabled {
             // 获取当前可执行文件路径
-            let exe_path = std::env::current_exe()
-                .map_err(|e| format!("无法获取程序路径: {}", e))?;
+            let exe_path =
+                std::env::current_exe().map_err(|e| format!("无法获取程序路径: {}", e))?;
             let exe_str = exe_path.to_string_lossy().to_string();
 
             // 写入注册表
@@ -779,7 +784,7 @@ async fn get_autostart() -> Result<bool, String> {
         use winreg::RegKey;
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        
+
         // 尝试打开注册表键
         let key = match hkcu.open_subkey(AUTOSTART_KEY) {
             Ok(k) => k,
