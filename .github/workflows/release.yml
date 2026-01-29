@@ -111,6 +111,8 @@ jobs:
       - name: Build Tauri app
         working-directory: rust
         run: npm run tauri build -- --target ${{ matrix.target }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
 
       - name: Upload Windows artifacts
         if: matrix.os == 'windows-latest'

@@ -51,11 +51,6 @@ export function Sidebar({ currentView, onNavigate }: SidebarProps) {
 
   return (
     <aside className="w-16 lg:w-56 h-full bg-white/80 backdrop-blur-xl border-r border-gray-200/50 flex flex-col transition-[width] duration-300 ease-out">
-      {/* Logo */}
-      <div className="h-14 flex items-center justify-center lg:justify-start px-2 lg:px-5 border-b border-apple-gray-200">
-        <span className="font-semibold text-apple-gray-600">anyFAST</span>
-      </div>
-
       {/* Navigation */}
       <nav className="flex-1 p-2 lg:p-3">
         {items.map((item) => {

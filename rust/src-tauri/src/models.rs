@@ -227,13 +227,13 @@ fn default_autostart() -> bool {
 fn default_endpoints() -> Vec<Endpoint> {
     vec![
         Endpoint {
-            name: "BetterClaude".into(),
+            name: "anyrouter大善人".into(),
             url: "https://betterclau.de/claude/anyrouter.top".into(),
             domain: "betterclau.de".into(),
             enabled: true,
         },
         Endpoint {
-            name: "WZW 代理".into(),
+            name: "L站WONG大佬".into(),
             url: "https://wzw.pp.ua/v1".into(),
             domain: "wzw.pp.ua".into(),
             enabled: true,
@@ -468,8 +468,10 @@ mod tests {
     #[test]
     fn test_app_config_autostart_serialization() {
         // Test with autostart = true
-        let mut config = AppConfig::default();
-        config.autostart = true;
+        let config = AppConfig {
+            autostart: true,
+            ..Default::default()
+        };
 
         let json = serde_json::to_string(&config).unwrap();
         let parsed: AppConfig = serde_json::from_str(&json).unwrap();
