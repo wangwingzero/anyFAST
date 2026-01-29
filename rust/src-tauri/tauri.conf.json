@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "anyrouter L站WONG大佬",
+  "productName": "anyFAST",
   "version": "1.0.2",
   "identifier": "com.anyfast.app",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "anyrouter L站WONG大佬",
+        "title": "anyFAST",
         "width": 960,
         "height": 640,
         "minWidth": 800,
