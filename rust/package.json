@@ -1,6 +1,6 @@
 {
   "name": "anyrouter",
-  "version": "1.0.3",
+  "version": "1.0.2",
   "description": "anyrouter L站WONG大佬 - 中转站端点优选工具",
   "type": "module",
   "scripts": {
