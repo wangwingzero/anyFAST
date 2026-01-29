@@ -19,6 +19,14 @@ export interface EndpointResult {
   use_original: boolean
 }
 
+// 工作流结果 - 启动工作流后返回的统计信息
+export interface WorkflowResult {
+  testCount: number           // 测试的端点数
+  successCount: number        // 成功的端点数
+  appliedCount: number        // 应用的绑定数
+  results: EndpointResult[]   // 详细测试结果
+}
+
 export interface AppConfig {
   mode: 'manual' | 'auto'
   check_interval: number      // 健康检查间隔（秒）
@@ -30,6 +38,7 @@ export interface AppConfig {
   clear_on_exit: boolean      // 退出时清除 hosts 绑定
   cloudflare_ips: string[]
   endpoints: Endpoint[]
+  autostart: boolean          // 开机自启动
 }
 
 export interface Progress {

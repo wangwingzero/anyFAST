@@ -1,7 +1,7 @@
 {
-  "name": "anyfast",
-  "version": "1.0.1",
-  "description": "anyFAST - 中转站端点优选工具",
+  "name": "anyrouter",
+  "version": "1.0.3",
+  "description": "anyrouter L站WONG大佬 - 中转站端点优选工具",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,28 +13,29 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.0.0",
-    "lucide-react": "^0.400.0",
     "clsx": "^2.1.0",
-    "tailwind-merge": "^2.3.0",
-    "recharts": "^2.12.0"
+    "lucide-react": "^0.400.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.0",
+    "tailwind-merge": "^2.3.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
+    "@testing-library/jest-dom": "^6.4.6",
+    "@testing-library/react": "^16.0.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.19",
+    "fast-check": "^4.5.3",
+    "jsdom": "^24.1.0",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
     "typescript": "^5.4.5",
     "vite": "^5.3.0",
-    "vitest": "^2.0.0",
-    "@testing-library/react": "^16.0.0",
-    "@testing-library/jest-dom": "^6.4.6",
-    "jsdom": "^24.1.0"
+    "vitest": "^2.0.0"
   }
 }

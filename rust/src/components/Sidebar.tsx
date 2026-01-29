@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Activity, Settings, Zap, FileText, ShieldAlert, ShieldCheck, BarChart3, Server, RotateCcw, RefreshCw } from 'lucide-react'
+import { Activity, Settings, FileText, ShieldAlert, ShieldCheck, BarChart3, Server, RotateCcw, RefreshCw } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { PermissionStatus } from '../types'
 
@@ -53,8 +53,7 @@ export function Sidebar({ currentView, onNavigate }: SidebarProps) {
     <aside className="w-16 lg:w-56 h-full bg-white/80 backdrop-blur-xl border-r border-gray-200/50 flex flex-col transition-[width] duration-300 ease-out">
       {/* Logo */}
       <div className="h-14 flex items-center justify-center lg:justify-start px-2 lg:px-5 border-b border-apple-gray-200">
-        <Zap className="w-5 h-5 text-apple-blue flex-shrink-0" aria-hidden="true" />
-        <span className="hidden lg:block ml-2 font-semibold text-apple-gray-600">anyFAST</span>
+        <span className="font-semibold text-apple-gray-600">anyFAST</span>
       </div>
 
       {/* Navigation */}

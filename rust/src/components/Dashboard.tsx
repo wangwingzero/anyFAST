@@ -1,19 +1,133 @@
 import { useState } from 'react'
-import { Play, Square, CheckCircle2, Zap, Globe, Link2, Trash2, TrendingUp, TrendingDown, Minus, Plus, X } from 'lucide-react'
+import { Play, Square, CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Activity } from 'lucide-react'
 import { Endpoint, EndpointResult, Progress, EndpointHealth } from '../types'
+
+// WorkingIndicator 组件 Props 接口
+// Requirements: 5.1, 5.2, 5.3, 5.4
+interface WorkingIndicatorProps {
+  isWorking: boolean
+  bindingCount: number
+}
+
+// WorkingIndicator 组件 - 工作状态指示器
+// Requirement 5.1: 工作状态时显示脉冲动画效果
+// Requirement 5.3: 停止状态时停止动画并显示静态样式
+// Requirement 5.4: 显示当前工作状态文字提示
+export function WorkingIndicator({ isWorking, bindingCount }: WorkingIndicatorProps) {
+  // 根据 isWorking 状态决定显示内容
+  const statusText = isWorking ? '工作中' : '已停止'
+  
+  // 根据状态设置样式
+  // Requirement 5.1: 工作状态时应用脉冲动画 CSS 类
+  // Requirement 5.3: 停止状态时移除脉冲动画 CSS 类
+  const indicatorStyles = isWorking
+    ? 'bg-apple-green/10 border-apple-green/30'
+    : 'bg-apple-gray-100 border-apple-gray-200'
+  
+  const dotStyles = isWorking
+    ? 'bg-apple-green working-indicator-pulse'
+    : 'bg-apple-gray-400'
+  
+  const textStyles = isWorking
+    ? 'text-apple-green'
+    : 'text-apple-gray-500'
+  
+  const iconStyles = isWorking
+    ? 'text-apple-green'
+    : 'text-apple-gray-400'
+
+  return (
+    <div
+      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all duration-300 ${indicatorStyles}`}
+      data-testid="working-indicator"
+      aria-label={`工作状态: ${statusText}`}
+    >
+      {/* 状态指示点 - 工作时有脉冲动画 */}
+      <span
+        className={`w-2 h-2 rounded-full transition-all duration-300 ${dotStyles}`}
+        data-testid="working-indicator-dot"
+      />
+      
+      {/* 状态图标 */}
+      <Activity
+        className={`w-4 h-4 transition-colors duration-300 ${iconStyles}`}
+        data-testid="working-indicator-icon"
+      />
+      
+      {/* 状态文字 */}
+      <span
+        className={`text-sm font-medium transition-colors duration-300 ${textStyles}`}
+        data-testid="working-indicator-text"
+      >
+        {statusText}
+      </span>
+      
+      {/* 绑定数量显示 */}
+      {bindingCount > 0 && (
+        <span
+          className="text-xs text-apple-gray-400 ml-1"
+          data-testid="working-indicator-binding-count"
+        >
+          ({bindingCount} 绑定)
+        </span>
+      )}
+    </div>
+  )
+}
+
+// ToggleButton 组件 Props 接口
+interface ToggleButtonProps {
+  isWorking: boolean
+  isLoading: boolean
+  disabled: boolean
+  onClick: () => void
+}
+
+// ToggleButton 组件 - 启动/停止切换按钮
+// Requirements: 2.3, 2.4, 2.5
+export function ToggleButton({ isWorking, isLoading, disabled, onClick }: ToggleButtonProps) {
+  // 根据 isWorking 状态决定显示内容
+  // Requirement 2.4: 停止状态时显示"启动"文字和启动图标
+  // Requirement 2.5: 启动状态时显示"停止"文字和停止图标
+  const buttonText = isWorking ? '停止' : '启动'
+  const ButtonIcon = isWorking ? Square : Play
+  
+  // 根据状态设置按钮样式
+  // 启动状态（isWorking=true）: 红色按钮 + 活跃动画效果
+  // 停止状态（isWorking=false）: 绿色按钮
+  // Requirement 5.2: 工作状态时显示醒目的活跃状态样式
+  const buttonStyles = isWorking
+    ? 'bg-apple-red shadow-apple-red/20 hover:opacity-90 toggle-button-active'
+    : 'bg-apple-green shadow-apple-green/20 hover:opacity-90'
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || isLoading}
+      className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 text-white text-sm font-medium rounded-xl shadow-lg btn-press transition-all disabled:opacity-50 disabled:cursor-not-allowed ${buttonStyles}`}
+      data-testid="toggle-button"
+      aria-label={buttonText}
+    >
+      {isLoading ? (
+        <Loader2 className="w-4 h-4 animate-spin" data-testid="toggle-button-loading" />
+      ) : (
+        <ButtonIcon className="w-4 h-4" data-testid={isWorking ? 'toggle-button-stop-icon' : 'toggle-button-start-icon'} />
+      )}
+      <span data-testid="toggle-button-text">{buttonText}</span>
+    </button>
+  )
+}
 
 interface DashboardProps {
   endpoints: Endpoint[]
   results: EndpointResult[]
   isRunning: boolean
+  isWorking: boolean  // 工作状态
   progress: Progress
   bindingCount: number
   healthStatus?: EndpointHealth[]
-  onStart: () => void
-  onStop: () => void
   onApply: (result: EndpointResult) => void
-  onApplyAll: () => void
-  onClearBindings: () => void
+  onToggleWorkflow: () => void  // 切换工作流
   onEndpointsChange?: (endpoints: Endpoint[]) => void
   onSaveConfig?: (endpoints: Endpoint[]) => void
 }
@@ -22,14 +136,12 @@ export function Dashboard({
   endpoints,
   results,
   isRunning,
+  isWorking,
   progress,
   bindingCount,
   healthStatus,
-  onStart,
-  onStop,
   onApply,
-  onApplyAll,
-  onClearBindings,
+  onToggleWorkflow,
   onEndpointsChange,
   onSaveConfig,
 }: DashboardProps) {
@@ -83,6 +195,9 @@ export function Dashboard({
         <CompactStatus icon={<Globe className="w-4 h-4" />} label="已测" value={testedCount} color="blue" />
         <CompactStatus icon={<CheckCircle2 className="w-4 h-4" />} label="可用" value={availableCount} color="green" />
         <CompactStatus icon={<Link2 className="w-4 h-4" />} label="绑定" value={bindingCount} color="orange" />
+        
+        {/* Requirement 5.4: 在状态栏区域显示当前工作状态文字提示 */}
+        <WorkingIndicator isWorking={isWorking} bindingCount={bindingCount} />
       </div>
 
       {/* Endpoints Management */}
@@ -187,24 +302,13 @@ export function Dashboard({
             )}
           </div>
           <div className="flex gap-2 w-full sm:w-auto">
-            {!isRunning ? (
-              <button
-                onClick={onStart}
-                disabled={endpoints.length === 0}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-apple-blue text-white text-sm font-medium rounded-xl shadow-lg shadow-apple-blue/20 btn-press hover:bg-apple-blue-hover transition-colors disabled:opacity-50"
-              >
-                <Play className="w-4 h-4" />
-                开始测速
-              </button>
-            ) : (
-              <button
-                onClick={onStop}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-apple-red text-white text-sm font-medium rounded-xl shadow-lg shadow-apple-red/20 btn-press hover:opacity-90 transition-opacity"
-              >
-                <Square className="w-4 h-4" />
-                停止
-              </button>
-            )}
+            {/* Requirement 2.3: 单一的启动/停止切换按钮 */}
+            <ToggleButton
+              isWorking={isWorking}
+              isLoading={isRunning}
+              disabled={enabledCount === 0}
+              onClick={onToggleWorkflow}
+            />
           </div>
         </div>
       </div>
@@ -258,24 +362,6 @@ export function Dashboard({
         </div>
       </div>
 
-      {/* Action Buttons */}
-      <div className="flex flex-col sm:flex-row gap-3 mt-4 flex-shrink-0">
-        <button
-          onClick={onApplyAll}
-          disabled={availableCount === 0}
-          className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-apple-green text-white text-sm font-medium rounded-xl shadow-lg shadow-apple-green/20 btn-press hover:opacity-90 transition-opacity disabled:opacity-50"
-        >
-          <CheckCircle2 className="w-4 h-4" />
-          一键全部应用
-        </button>
-        <button
-          onClick={onClearBindings}
-          className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-apple-gray-200 text-apple-gray-600 text-sm font-medium rounded-xl btn-press hover:bg-apple-gray-300 transition-colors"
-        >
-          <Trash2 className="w-4 h-4" />
-          清除绑定
-        </button>
-      </div>
     </div>
   )
 }

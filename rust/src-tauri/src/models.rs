@@ -141,6 +141,16 @@ pub struct UpdateInfo {
     pub published_at: String,
 }
 
+/// 工作流执行结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowResult {
+    pub test_count: u32,
+    pub success_count: u32,
+    pub applied_count: u32,
+    pub results: Vec<EndpointResult>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default = "default_mode")]
@@ -159,6 +169,8 @@ pub struct AppConfig {
     pub close_to_tray: bool,
     #[serde(default = "default_clear_on_exit")]
     pub clear_on_exit: bool,
+    #[serde(default = "default_autostart")]
+    pub autostart: bool,
     #[serde(default)]
     pub cloudflare_ips: Vec<String>,
     #[serde(default = "default_endpoints")]
@@ -176,6 +188,7 @@ impl Default for AppConfig {
             minimize_to_tray: default_minimize(),
             close_to_tray: default_close_to_tray(),
             clear_on_exit: default_clear_on_exit(),
+            autostart: default_autostart(),
             cloudflare_ips: Vec::new(),
             endpoints: default_endpoints(),
         }
@@ -207,18 +220,22 @@ fn default_clear_on_exit() -> bool {
     false
 } // 退出时清除 hosts 绑定（默认关闭）
 
+fn default_autostart() -> bool {
+    false
+} // 开机自启动（默认关闭）
+
 fn default_endpoints() -> Vec<Endpoint> {
     vec![
-        Endpoint {
-            name: "WZW 代理".into(),
-            url: "https://wzw.pp.ua/v1".into(),
-            domain: "wzw.pp.ua".into(),
-            enabled: true,
-        },
         Endpoint {
             name: "BetterClaude".into(),
             url: "https://betterclau.de/claude/anyrouter.top".into(),
             domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "WZW 代理".into(),
+            url: "https://wzw.pp.ua/v1".into(),
+            domain: "wzw.pp.ua".into(),
             enabled: true,
         },
     ]
@@ -354,6 +371,7 @@ mod tests {
         assert!(config.minimize_to_tray);
         assert!(config.close_to_tray);
         assert!(!config.clear_on_exit); // 默认关闭
+        assert!(!config.autostart); // 默认关闭
         assert!(config.cloudflare_ips.is_empty());
         assert_eq!(config.endpoints.len(), 2);
     }
@@ -392,5 +410,83 @@ mod tests {
         assert_eq!(stats.total_speedup_ms, 0.0);
         assert_eq!(stats.avg_speedup_percent, 0.0);
         assert!(stats.records.is_empty());
+    }
+
+    #[test]
+    fn test_workflow_result_creation() {
+        let ep = Endpoint {
+            name: "Test".into(),
+            url: "https://test.com".into(),
+            domain: "test.com".into(),
+            enabled: true,
+        };
+        let endpoint_result = EndpointResult::success(ep, "1.2.3.4".into(), 100.0);
+        
+        let workflow_result = WorkflowResult {
+            test_count: 2,
+            success_count: 1,
+            applied_count: 1,
+            results: vec![endpoint_result],
+        };
+
+        assert_eq!(workflow_result.test_count, 2);
+        assert_eq!(workflow_result.success_count, 1);
+        assert_eq!(workflow_result.applied_count, 1);
+        assert_eq!(workflow_result.results.len(), 1);
+    }
+
+    #[test]
+    fn test_workflow_result_serialization() {
+        let ep = Endpoint {
+            name: "Test".into(),
+            url: "https://test.com".into(),
+            domain: "test.com".into(),
+            enabled: true,
+        };
+        let endpoint_result = EndpointResult::success(ep, "1.2.3.4".into(), 100.0);
+        
+        let workflow_result = WorkflowResult {
+            test_count: 2,
+            success_count: 1,
+            applied_count: 1,
+            results: vec![endpoint_result],
+        };
+
+        let json = serde_json::to_string(&workflow_result).unwrap();
+        // Verify camelCase serialization
+        assert!(json.contains("testCount"));
+        assert!(json.contains("successCount"));
+        assert!(json.contains("appliedCount"));
+        
+        let parsed: WorkflowResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(workflow_result.test_count, parsed.test_count);
+        assert_eq!(workflow_result.success_count, parsed.success_count);
+        assert_eq!(workflow_result.applied_count, parsed.applied_count);
+        assert_eq!(workflow_result.results.len(), parsed.results.len());
+    }
+
+    #[test]
+    fn test_app_config_autostart_serialization() {
+        // Test with autostart = true
+        let mut config = AppConfig::default();
+        config.autostart = true;
+        
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(parsed.autostart);
+        
+        // Test with autostart = false (default)
+        let config2 = AppConfig::default();
+        let json2 = serde_json::to_string(&config2).unwrap();
+        let parsed2: AppConfig = serde_json::from_str(&json2).unwrap();
+        assert!(!parsed2.autostart);
+    }
+
+    #[test]
+    fn test_app_config_autostart_default_deserialization() {
+        // Test that missing autostart field defaults to false
+        let json = r#"{"mode":"auto","check_interval":30}"#;
+        let parsed: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(!parsed.autostart);
     }
 }

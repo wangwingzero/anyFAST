@@ -17,6 +17,7 @@ const mockConfig = {
   close_to_tray: true,
   clear_on_exit: false,
   cloudflare_ips: [],
+  autostart: false,
   endpoints: [
     { name: 'Test 1', url: 'https://test1.com/v1', domain: 'test1.com', enabled: true },
     { name: 'Test 2', url: 'https://test2.com/v1', domain: 'test2.com', enabled: true },
@@ -51,6 +52,12 @@ describe('App', () => {
           return true
         case 'get_permission_status':
           return { hasPermission: true, isUsingService: false }
+        case 'is_workflow_running':
+          return false
+        case 'start_workflow':
+          return { testCount: 2, successCount: 2, appliedCount: 2, results: mockResults }
+        case 'stop_workflow':
+          return 0
         case 'start_speed_test':
           return mockResults
         case 'apply_all_endpoints':
@@ -129,29 +136,29 @@ describe('App', () => {
     })
   })
 
-  it('starts speed test', async () => {
+  it('starts workflow with toggle button', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('开始测速')).toBeInTheDocument()
+      expect(screen.getByText('启动')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText('开始测速'))
+    fireEvent.click(screen.getByText('启动'))
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('start_speed_test')
+      expect(invoke).toHaveBeenCalledWith('start_workflow')
     })
   })
 
-  it('shows results after test', async () => {
+  it('shows results after workflow starts', async () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('开始测速')).toBeInTheDocument()
+      expect(screen.getByText('启动')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText('开始测速'))
+    fireEvent.click(screen.getByText('启动'))
 
     await waitFor(() => {
       expect(screen.getByText('100ms')).toBeInTheDocument()
@@ -162,11 +169,11 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('开始测速')).toBeInTheDocument()
+      expect(screen.getByText('启动')).toBeInTheDocument()
     })
 
-    // Start test
-    fireEvent.click(screen.getByText('开始测速'))
+    // Start workflow
+    fireEvent.click(screen.getByText('启动'))
 
     // Navigate to logs
     await waitFor(() => {
@@ -179,40 +186,20 @@ describe('App', () => {
     })
   })
 
-  it('handles apply all endpoints', async () => {
+  it('handles toggle workflow (start and stop)', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     render(<App />)
 
-    // Wait for config to load and run test
+    // Wait for config to load
     await waitFor(() => {
-      expect(screen.getByText('开始测速')).toBeInTheDocument()
+      expect(screen.getByText('启动')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText('开始测速'))
+    // Click to start workflow
+    fireEvent.click(screen.getByText('启动'))
 
     await waitFor(() => {
-      expect(screen.getByText('一键全部应用')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByText('一键全部应用'))
-
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('apply_all_endpoints')
-    })
-  })
-
-  it('handles clear bindings', async () => {
-    const { invoke } = await import('@tauri-apps/api/core')
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByText('清除绑定')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByText('清除绑定'))
-
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('clear_all_bindings')
+      expect(invoke).toHaveBeenCalledWith('start_workflow')
     })
   })
 

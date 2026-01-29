@@ -1,6 +1,6 @@
 [package]
 name = "anyfast"
-version = "1.0.1"
+version = "1.0.3"
 description = "anyFAST - 中转站端点优选工具"
 authors = ["hudawang"]
 edition = "2021"
@@ -54,6 +54,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading",
 ] }
 windows-service = "0.7"
+winreg = "0.52"
 ctrlc = "3"
 
 [dev-dependencies]

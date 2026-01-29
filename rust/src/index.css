@@ -111,3 +111,48 @@ body {
 .animate-toast-out {
   animation: toastOut 0.3s ease-in forwards;
 }
+
+/* Working Indicator Pulse Animation */
+/* Requirements: 5.1, 5.3 - 工作状态脉冲动画效果 */
+@keyframes workingPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.4);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.15);
+    box-shadow: 0 0 8px 2px rgba(52, 199, 89, 0.3);
+  }
+}
+
+.working-indicator-pulse {
+  animation: workingPulse 2s ease-in-out infinite;
+}
+
+/* Toggle Button Active State Animation */
+/* Requirement 5.2 - 工作状态时按钮显示醒目的活跃状态样式 */
+@keyframes buttonActiveGlow {
+  0%, 100% {
+    box-shadow: 0 4px 14px 0 rgba(255, 59, 48, 0.3);
+  }
+  50% {
+    box-shadow: 0 4px 20px 0 rgba(255, 59, 48, 0.5);
+  }
+}
+
+.toggle-button-active {
+  animation: buttonActiveGlow 2s ease-in-out infinite;
+}
+
+/* Working state container styles */
+.working-indicator-container-active {
+  background: rgba(52, 199, 89, 0.1);
+  border-color: rgba(52, 199, 89, 0.3);
+}
+
+.working-indicator-container-inactive {
+  background: rgba(142, 142, 147, 0.1);
+  border-color: rgba(142, 142, 147, 0.2);
+}

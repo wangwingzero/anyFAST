@@ -476,6 +476,47 @@ impl HostsManager {
         Ok(removed_count)
     }
 
+    /// Clear ALL anyFAST-managed bindings from hosts file
+    /// This removes the entire anyFAST block regardless of current config
+    pub fn clear_all_anyfast_bindings() -> Result<usize, HostsError> {
+        Self::clear_all_anyfast_bindings_from_path(Path::new(HOSTS_PATH))
+    }
+
+    /// Internal: clear all anyFAST bindings from custom path (for testing)
+    fn clear_all_anyfast_bindings_from_path(path: &Path) -> Result<usize, HostsError> {
+        // Open file with exclusive lock for atomic read-modify-write
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    HostsError::PermissionDenied
+                } else {
+                    HostsError::Io(e)
+                }
+            })?;
+
+        // Acquire exclusive lock (blocks until available)
+        file.lock_exclusive().map_err(HostsError::Io)?;
+
+        // Read and parse existing content
+        let content = read_hosts_content(&mut file)?;
+        let mut parsed = ParsedHosts::parse(&content);
+
+        // Count and clear all bindings
+        let removed_count = parsed.anyrouter_bindings.len();
+        parsed.anyrouter_bindings.clear();
+
+        // Generate new content (will not include anyFAST block since bindings is empty)
+        let new_content = parsed.render();
+
+        // Atomic write
+        atomic_write(path, &new_content)?;
+
+        Ok(removed_count)
+    }
+
     /// Flush DNS cache
     pub fn flush_dns() -> Result<(), HostsError> {
         #[cfg(windows)]

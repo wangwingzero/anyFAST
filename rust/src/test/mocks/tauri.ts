@@ -26,6 +26,7 @@ export const mockConfig: AppConfig = {
       enabled: true,
     },
   ],
+  autostart: false,
 }
 
 // Mock endpoint results

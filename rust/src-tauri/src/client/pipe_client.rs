@@ -236,6 +236,13 @@ impl PipeClient {
         Ok(count.count)
     }
 
+    /// Clear ALL anyFAST-managed bindings (removes entire anyFAST block)
+    pub fn clear_all_anyfast_bindings(&self) -> Result<u32, PipeClientError> {
+        let result = self.call(methods::CLEAR_ALL_ANYFAST, serde_json::Value::Null)?;
+        let count: CountResult = serde_json::from_value(result)?;
+        Ok(count.count)
+    }
+
     /// Read a binding
     pub fn read_binding(&self, domain: &str) -> Result<Option<String>, PipeClientError> {
         let params = ReadBindingParams {

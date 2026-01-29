@@ -25,6 +25,7 @@ describe('Settings', () => {
     clear_on_exit: false,
     cloudflare_ips: ['1.2.3.4'],
     endpoints: mockEndpoints,
+    autostart: false,
   }
 
   const defaultProps = {
@@ -118,5 +119,32 @@ describe('Settings', () => {
     render(<Settings {...defaultProps} />)
 
     expect(screen.getByText('恢复默认值')).toBeInTheDocument()
+  })
+
+  it('shows autostart toggle in system section', () => {
+    render(<Settings {...defaultProps} />)
+
+    expect(screen.getByText('系统')).toBeInTheDocument()
+    expect(screen.getByText('开机自启动')).toBeInTheDocument()
+    expect(screen.getByText('系统启动时自动运行 anyFAST')).toBeInTheDocument()
+  })
+
+  it('calls set_autostart when autostart toggle is clicked', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    vi.mocked(invoke).mockResolvedValue(undefined)
+
+    render(<Settings {...defaultProps} />)
+
+    // Find the autostart toggle by its parent label text
+    const autostartLabel = screen.getByText('开机自启动').closest('label')
+    const toggle = autostartLabel?.querySelector('.rounded-full')
+
+    if (toggle) {
+      fireEvent.click(toggle)
+
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith('set_autostart', { enabled: true })
+      })
+    }
   })
 })

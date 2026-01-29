@@ -7,7 +7,7 @@ import { Settings } from './components/Settings'
 import { Logs } from './components/Logs'
 import { HistoryView } from './components/HistoryView'
 import { ToastContainer, ToastData, ToastType } from './components'
-import { Endpoint, EndpointResult, AppConfig, LogEntry, EndpointHealth } from './types'
+import { Endpoint, EndpointResult, AppConfig, LogEntry, EndpointHealth, WorkflowResult } from './types'
 
 type View = 'dashboard' | 'settings' | 'logs' | 'history'
 
@@ -18,7 +18,9 @@ const isPermissionError = (error: unknown): boolean => {
   const errorStr = String(error).toLowerCase()
   return errorStr.includes('permission denied') || 
          errorStr.includes('access denied') ||
-         errorStr.includes('administrator')
+         errorStr.includes('administrator') ||
+         errorStr.includes('拒绝访问') ||
+         errorStr.includes('os error 5')  // Windows ERROR_ACCESS_DENIED
 }
 
 function App() {
@@ -33,6 +35,7 @@ function App() {
   const [toasts, setToasts] = useState<ToastData[]>([])
   const [showAdminDialog, setShowAdminDialog] = useState(false)
   const [healthStatus, setHealthStatus] = useState<EndpointHealth[]>([])
+  const [isWorking, setIsWorking] = useState(false)
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastIdCounter
@@ -85,6 +88,7 @@ function App() {
   useEffect(() => {
     loadConfig()
     refreshBindingCount()
+    checkWorkflowStatus()
 
     // 监听健康检查结果事件
     const unlistenHealth = listen<{ endpoints_health: EndpointHealth[] }>('health-check-result', (event) => {
@@ -95,6 +99,95 @@ function App() {
       unlistenHealth.then(fn => fn())
     }
   }, [])
+
+  // 检查工作流运行状态
+  const checkWorkflowStatus = async () => {
+    try {
+      const running = await invoke<boolean>('is_workflow_running')
+      setIsWorking(running)
+      if (running) {
+        addLog('info', '检测到工作流正在运行')
+        // 获取当前的测速结果
+        try {
+          const currentResults = await invoke<EndpointResult[]>('get_current_results')
+          if (currentResults && currentResults.length > 0) {
+            setResults(currentResults)
+            addLog('info', `已加载 ${currentResults.length} 个测速结果`)
+          }
+        } catch (e) {
+          console.error('Failed to get current results:', e)
+        }
+      }
+    } catch (e) {
+      console.error('Failed to check workflow status:', e)
+    }
+  }
+
+  // 切换工作流状态（启动/停止）
+  const toggleWorkflow = async () => {
+    if (isWorking) {
+      // 停止工作流
+      setIsRunning(true)
+      try {
+        addLog('info', '正在停止工作流...')
+        const clearedCount = await invoke<number>('stop_workflow')
+        setIsWorking(false)
+        await refreshBindingCount()
+        setProgress({ current: 0, total: 0, message: '已停止' })
+        addLog('success', `工作流已停止，清除了 ${clearedCount} 个绑定`)
+        showToast('info', `已停止，清除了 ${clearedCount} 个绑定`)
+        setHealthStatus([])
+      } catch (e) {
+        console.error('Stop workflow failed:', e)
+        if (handlePermissionError(e)) {
+          addLog('error', '停止工作流失败: 需要管理员权限')
+        } else {
+          addLog('error', `停止工作流失败: ${e}`)
+          showToast('error', `停止失败: ${e}`)
+        }
+      } finally {
+        setIsRunning(false)
+      }
+    } else {
+      // 启动工作流
+      const enabledCount = endpoints.filter((e) => e.enabled).length
+      if (enabledCount === 0) {
+        addLog('warning', '没有启用的端点，请先添加')
+        showToast('warning', '没有启用的端点')
+        return
+      }
+
+      setIsRunning(true)
+      try {
+        setProgress({ current: 0, total: enabledCount, message: '正在启动工作流...' })
+        addLog('info', `正在启动工作流，测试 ${enabledCount} 个端点...`)
+        
+        const result = await invoke<WorkflowResult>('start_workflow')
+        setIsWorking(true)
+        setResults(result.results)
+        await refreshBindingCount()
+        
+        setProgress({ 
+          current: result.testCount, 
+          total: result.testCount, 
+          message: `已应用 ${result.appliedCount} 个绑定` 
+        })
+        addLog('success', `工作流已启动: 测试 ${result.testCount} 个端点，成功 ${result.successCount} 个，应用 ${result.appliedCount} 个绑定`)
+        showToast('success', `已启动，应用了 ${result.appliedCount} 个绑定`)
+      } catch (e) {
+        console.error('Start workflow failed:', e)
+        if (handlePermissionError(e)) {
+          addLog('error', '启动工作流失败: 需要管理员权限')
+        } else {
+          setProgress({ current: 0, total: 0, message: `启动失败: ${e}` })
+          addLog('error', `启动工作流失败: ${e}`)
+          showToast('error', `启动失败: ${e}`)
+        }
+      } finally {
+        setIsRunning(false)
+      }
+    }
+  }
 
   const loadConfig = async () => {
     try {
@@ -117,64 +210,11 @@ function App() {
     }
   }
 
-  const startTest = async () => {
-    const enabledCount = endpoints.filter((e) => e.enabled).length
-    if (enabledCount === 0) {
-      addLog('warning', '没有启用的端点，请先在设置中添加')
-      return
-    }
+  // [已移除] startTest - 由 toggleWorkflow 中的 start_workflow 替代
+  // 原有的手动测速功能已整合到简化工作流中
 
-    setIsRunning(true)
-    setResults([])
-    setProgress({ current: 0, total: enabledCount, message: '正在测试...' })
-    addLog('info', `开始测试 ${enabledCount} 个端点...`)
-    addLog('info', `端点列表: ${endpoints.filter(e => e.enabled).map(e => e.name).join(', ')}`)
-
-    const startTime = Date.now()
-
-    try {
-      addLog('info', '正在进行 DNS 解析和 HTTPS 测试...')
-      const res = await invoke<EndpointResult[]>('start_speed_test')
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-      setResults(res)
-
-      const successCount = res.filter((r) => r.success).length
-      setProgress({ current: res.length, total: res.length, message: '测试完成' })
-      addLog('success', `测试完成: ${successCount}/${res.length} 个端点可用 (耗时 ${elapsed}s)`)
-
-      // 记录每个端点的详细结果
-      res.forEach((r, i) => {
-        if (r.success) {
-          const speedup = r.speedup_percent !== undefined && r.speedup_percent > 0
-            ? ` (加速 ${r.speedup_percent.toFixed(0)}%)`
-            : ''
-          addLog('success', `[${i + 1}] ${r.endpoint.name}: ${r.latency.toFixed(0)}ms → ${r.ip}${speedup}`)
-        } else {
-          addLog('error', `[${i + 1}] ${r.endpoint.name}: ${r.error || '连接失败'}`)
-        }
-      })
-
-      // 汇总信息
-      if (successCount > 0) {
-        const avgLatency = res.filter(r => r.success).reduce((sum, r) => sum + r.latency, 0) / successCount
-        addLog('info', `平均延迟: ${avgLatency.toFixed(0)}ms`)
-      }
-    } catch (e) {
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-      console.error('Test failed:', e)
-      setProgress({ current: 0, total: 0, message: `错误: ${e}` })
-      addLog('error', `测试失败 (耗时 ${elapsed}s): ${e}`)
-      addLog('warning', '请检查网络连接，或查看控制台获取详细错误信息')
-    } finally {
-      setIsRunning(false)
-    }
-  }
-
-  const stopTest = async () => {
-    await invoke('stop_speed_test')
-    setIsRunning(false)
-    addLog('warning', '测试已取消')
-  }
+  // [已移除] stopTest - 由 toggleWorkflow 中的 stop_workflow 替代
+  // 原有的手动停止功能已整合到简化工作流中
 
   const applyEndpoint = async (result: EndpointResult) => {
     try {
@@ -195,43 +235,45 @@ function App() {
     }
   }
 
-  const applyAll = async () => {
-    try {
-      const count = await invoke<number>('apply_all_endpoints')
-      await refreshBindingCount()
-      setProgress({ ...progress, message: `已绑定 ${count} 个端点` })
-      addLog('success', `一键应用完成: 已绑定 ${count} 个端点`)
-      showToast('success', `已成功绑定 ${count} 个端点`)
-    } catch (e) {
-      console.error('Apply all failed:', e)
-      if (handlePermissionError(e)) {
-        addLog('error', `一键应用失败: 需要管理员权限`)
-      } else {
-        setProgress({ ...progress, message: `绑定失败: ${e}` })
-        addLog('error', `一键应用失败: ${e}`)
-        showToast('error', `一键应用失败: ${e}`)
-      }
-    }
-  }
+  // [已移除] applyAll - 由 toggleWorkflow 中的 start_workflow 替代
+  // const applyAll = async () => {
+  //   try {
+  //     const count = await invoke<number>('apply_all_endpoints')
+  //     await refreshBindingCount()
+  //     setProgress({ ...progress, message: `已绑定 ${count} 个端点` })
+  //     addLog('success', `一键应用完成: 已绑定 ${count} 个端点`)
+  //     showToast('success', `已成功绑定 ${count} 个端点`)
+  //   } catch (e) {
+  //     console.error('Apply all failed:', e)
+  //     if (handlePermissionError(e)) {
+  //       addLog('error', `一键应用失败: 需要管理员权限`)
+  //     } else {
+  //       setProgress({ ...progress, message: `绑定失败: ${e}` })
+  //       addLog('error', `一键应用失败: ${e}`)
+  //       showToast('error', `一键应用失败: ${e}`)
+  //     }
+  //   }
+  // }
 
-  const clearBindings = async () => {
-    try {
-      const count = await invoke<number>('clear_all_bindings')
-      await refreshBindingCount()
-      setProgress({ ...progress, message: `已清除 ${count} 个绑定` })
-      addLog('info', `已清除 ${count} 个绑定`)
-      showToast('info', `已清除 ${count} 个绑定`)
-    } catch (e) {
-      console.error('Clear failed:', e)
-      if (handlePermissionError(e)) {
-        addLog('error', `清除绑定失败: 需要管理员权限`)
-      } else {
-        setProgress({ ...progress, message: `清除失败: ${e}` })
-        addLog('error', `清除绑定失败: ${e}`)
-        showToast('error', `清除失败: ${e}`)
-      }
-    }
-  }
+  // [已移除] clearBindings - 由 toggleWorkflow 中的 stop_workflow 替代
+  // const clearBindings = async () => {
+  //   try {
+  //     const count = await invoke<number>('clear_all_bindings')
+  //     await refreshBindingCount()
+  //     setProgress({ ...progress, message: `已清除 ${count} 个绑定` })
+  //     addLog('info', `已清除 ${count} 个绑定`)
+  //     showToast('info', `已清除 ${count} 个绑定`)
+  //   } catch (e) {
+  //     console.error('Clear failed:', e)
+  //     if (handlePermissionError(e)) {
+  //       addLog('error', `清除绑定失败: 需要管理员权限`)
+  //     } else {
+  //       setProgress({ ...progress, message: `清除失败: ${e}` })
+  //       addLog('error', `清除绑定失败: ${e}`)
+  //       showToast('error', `清除失败: ${e}`)
+  //     }
+  //   }
+  // }
 
   // 保存配置（用于仪表盘端点管理）
   const saveConfigWithEndpoints = async (newEndpoints: Endpoint[]) => {
@@ -300,14 +342,12 @@ function App() {
             endpoints={endpoints}
             results={results}
             isRunning={isRunning}
+            isWorking={isWorking}
             progress={progress}
             bindingCount={bindingCount}
             healthStatus={healthStatus}
-            onStart={startTest}
-            onStop={stopTest}
             onApply={applyEndpoint}
-            onApplyAll={applyAll}
-            onClearBindings={clearBindings}
+            onToggleWorkflow={toggleWorkflow}
             onEndpointsChange={setEndpoints}
             onSaveConfig={saveConfigWithEndpoints}
           />

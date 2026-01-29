@@ -89,6 +89,7 @@ pub mod methods {
     pub const WRITE_BINDINGS_BATCH: &str = "write_bindings_batch";
     pub const CLEAR_BINDING: &str = "clear_binding";
     pub const CLEAR_BINDINGS_BATCH: &str = "clear_bindings_batch";
+    pub const CLEAR_ALL_ANYFAST: &str = "clear_all_anyfast";
     pub const READ_BINDING: &str = "read_binding";
     pub const GET_ALL_BINDINGS: &str = "get_all_bindings";
     pub const FLUSH_DNS: &str = "flush_dns";

@@ -169,6 +169,33 @@ pub fn clear_bindings_batch(domains: &[&str]) -> Result<usize, HostsError> {
     HostsManager::clear_bindings_batch(domains)
 }
 
+/// Clear ALL anyFAST-managed bindings using Service if available, otherwise direct
+/// This removes the entire anyFAST block regardless of current config
+/// On service failure, automatically falls back to direct operation
+pub fn clear_all_anyfast_bindings() -> Result<usize, HostsError> {
+    #[cfg(windows)]
+    {
+        if is_service_running() {
+            let client = PipeClient::new();
+
+            match client.clear_all_anyfast_bindings() {
+                Ok(count) => return Ok(count as usize),
+                Err(e) => {
+                    // Service failed - mark unavailable and fall back to direct
+                    eprintln!(
+                        "Service clear_all_anyfast_bindings failed, falling back to direct: {}",
+                        e
+                    );
+                    mark_service_unavailable();
+                    // Fall through to direct operation
+                }
+            }
+        }
+    }
+
+    HostsManager::clear_all_anyfast_bindings()
+}
+
 /// Read a binding (always direct, reading doesn't need privileges)
 pub fn read_binding(domain: &str) -> Option<String> {
     HostsManager::read_binding(domain)

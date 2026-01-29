@@ -484,6 +484,7 @@ impl PipeServer {
             methods::CLEAR_BINDINGS_BATCH => {
                 self.handle_clear_bindings_batch(request.id, &request.params)
             }
+            methods::CLEAR_ALL_ANYFAST => self.handle_clear_all_anyfast(request.id),
             methods::READ_BINDING => self.handle_read_binding(request.id, &request.params),
             methods::GET_ALL_BINDINGS => self.handle_get_all_bindings(request.id),
             methods::FLUSH_DNS => self.handle_flush_dns(request.id),
@@ -592,6 +593,18 @@ impl PipeServer {
         let domains: Vec<&str> = params.domains.iter().map(|s| s.as_str()).collect();
 
         match HostsManager::clear_bindings_batch(&domains) {
+            Ok(count) => {
+                let result = CountResult {
+                    count: count as u32,
+                };
+                RpcResponse::success(id, serde_json::to_value(result).unwrap())
+            }
+            Err(e) => self.hosts_error_to_response(id, e),
+        }
+    }
+
+    fn handle_clear_all_anyfast(&self, id: u64) -> RpcResponse {
+        match HostsManager::clear_all_anyfast_bindings() {
             Ok(count) => {
                 let result = CountResult {
                     count: count as u32,

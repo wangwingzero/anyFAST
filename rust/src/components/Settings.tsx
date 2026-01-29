@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Globe, Clock, Gauge, Monitor, RotateCcw, AlertTriangle, Zap, Power, FileText, ExternalLink, RefreshCw, Download, Info } from 'lucide-react'
+import { Globe, Clock, Gauge, Monitor, RotateCcw, AlertTriangle, Zap, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle } from 'lucide-react'
 import { Endpoint, AppConfig, UpdateInfo } from '../types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
@@ -61,6 +61,10 @@ export function Settings({
   const [updateError, setUpdateError] = useState<string | null>(null)
   const [currentVersion, setCurrentVersion] = useState<string>('')
 
+  // 自启动状态
+  const [autostart, setAutostart] = useState(config?.autostart ?? false)
+  const [autostartLoading, setAutostartLoading] = useState(false)
+
   const initializedRef = useRef(false)
 
   // 自动保存函数
@@ -85,6 +89,7 @@ export function Settings({
       clear_on_exit: updates.clear_on_exit ?? clearOnExit,
       cloudflare_ips: (updates.cloudflare_ips ?? cfIps).split('\n').filter((ip) => ip.trim() && !ip.startsWith('#')),
       endpoints,
+      autostart: config?.autostart ?? false,
     }
 
     try {
@@ -114,6 +119,28 @@ export function Settings({
   useEffect(() => {
     invoke<string>('get_current_version').then(setCurrentVersion).catch(console.error)
   }, [])
+
+  // 获取自启动状态
+  useEffect(() => {
+    invoke<boolean>('get_autostart')
+      .then(setAutostart)
+      .catch(console.error)
+  }, [])
+
+  // 更新自启动设置
+  const updateAutostart = async (enabled: boolean) => {
+    setAutostartLoading(true)
+    try {
+      await invoke('set_autostart', { enabled })
+      setAutostart(enabled)
+    } catch (e) {
+      console.error('Failed to set autostart:', e)
+      // 恢复原状态
+      setAutostart(!enabled)
+    } finally {
+      setAutostartLoading(false)
+    }
+  }
 
   // 检查更新
   const checkForUpdate = async () => {
@@ -180,6 +207,7 @@ export function Settings({
       clear_on_exit: DEFAULT_CONFIG.clear_on_exit,
       cloudflare_ips: [],
       endpoints: DEFAULT_ENDPOINTS,
+      autostart: config?.autostart ?? false,  // 保持当前自启动设置
     }
     try {
       await invoke('save_config', { config: newConfig })
@@ -345,26 +373,49 @@ export function Settings({
           </div>
         </Section>
 
-        {/* Exit Settings */}
-        <Section icon={<Power className="w-5 h-5" />} title="退出行为">
-          <label className="flex items-center justify-between p-3 bg-apple-gray-50 rounded-xl cursor-pointer">
-            <div className="flex-1 min-w-0 mr-3">
-              <span className="text-sm text-apple-gray-600">退出时清除 hosts 绑定</span>
-              <p className="text-xs text-apple-gray-400 mt-0.5">退出程序时自动移除所有 hosts 优化，恢复原始状态</p>
-            </div>
-            <div
-              className={`w-11 h-6 rounded-full p-0.5 transition-colors flex-shrink-0 ${
-                clearOnExit ? 'bg-apple-green' : 'bg-apple-gray-300'
-              }`}
-              onClick={() => updateClearOnExit(!clearOnExit)}
-            >
+        {/* System Settings */}
+        <Section icon={<Power className="w-5 h-5" />} title="系统">
+          <div className="space-y-3">
+            <label className="flex items-center justify-between p-3 bg-apple-gray-50 rounded-xl cursor-pointer">
+              <div className="flex-1 min-w-0 mr-3">
+                <div className="flex items-center gap-2">
+                  <PlayCircle className="w-4 h-4 text-apple-gray-400" />
+                  <span className="text-sm text-apple-gray-600">开机自启动</span>
+                </div>
+                <p className="text-xs text-apple-gray-400 mt-0.5 ml-6">系统启动时自动运行 anyFAST</p>
+              </div>
               <div
-                className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                  clearOnExit ? 'translate-x-5' : 'translate-x-0'
+                className={`w-11 h-6 rounded-full p-0.5 transition-colors flex-shrink-0 ${
+                  autostartLoading ? 'opacity-50 cursor-wait' : ''
+                } ${autostart ? 'bg-apple-green' : 'bg-apple-gray-300'}`}
+                onClick={() => !autostartLoading && updateAutostart(!autostart)}
+              >
+                <div
+                  className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    autostart ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </label>
+            <label className="flex items-center justify-between p-3 bg-apple-gray-50 rounded-xl cursor-pointer">
+              <div className="flex-1 min-w-0 mr-3">
+                <span className="text-sm text-apple-gray-600">退出时清除 hosts 绑定</span>
+                <p className="text-xs text-apple-gray-400 mt-0.5">退出程序时自动移除所有 hosts 优化，恢复原始状态</p>
+              </div>
+              <div
+                className={`w-11 h-6 rounded-full p-0.5 transition-colors flex-shrink-0 ${
+                  clearOnExit ? 'bg-apple-green' : 'bg-apple-gray-300'
                 }`}
-              />
-            </div>
-          </label>
+                onClick={() => updateClearOnExit(!clearOnExit)}
+              >
+                <div
+                  className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    clearOnExit ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </label>
+          </div>
         </Section>
 
         {/* Advanced */}
