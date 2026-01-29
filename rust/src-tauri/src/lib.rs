@@ -1,4 +1,4 @@
-//! AnyRouter FAST - Rust Backend
+//! anyrouter FAST - Rust Backend
 //! 中转站端点优选工具
 
 mod config;

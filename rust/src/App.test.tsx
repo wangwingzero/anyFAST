@@ -74,7 +74,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('anyFAST')).toBeInTheDocument()
+      expect(screen.getByText('仪表盘')).toBeInTheDocument()
     })
   })
 
@@ -100,9 +100,8 @@ describe('App', () => {
     render(<App />)
 
     // The app should render without crashing
-    // Sidebar always renders anyFAST logo
     await waitFor(() => {
-      expect(screen.getByText('anyFAST')).toBeInTheDocument()
+      expect(screen.getByText('仪表盘')).toBeInTheDocument()
     }, { timeout: 5000 })
   })
 
@@ -219,7 +218,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('anyFAST')).toBeInTheDocument()
+      expect(screen.getByText('仪表盘')).toBeInTheDocument()
     })
   })
 })

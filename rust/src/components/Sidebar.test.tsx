@@ -17,10 +17,10 @@ describe('Sidebar', () => {
     vi.mocked(invoke).mockResolvedValue({ hasPermission: true, isUsingService: false })
   })
 
-  it('renders logo and title', () => {
+  it('renders navigation items', () => {
     render(<Sidebar currentView="dashboard" onNavigate={mockOnNavigate} />)
 
-    expect(screen.getByText('anyFAST')).toBeInTheDocument()
+    expect(screen.getByText('仪表盘')).toBeInTheDocument()
   })
 
   it('renders all navigation items', () => {

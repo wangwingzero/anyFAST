@@ -100,7 +100,7 @@ function App() {
     }
   }, [])
 
-  // 检查工作流运行状态
+  // 检查工作流运行状态，如果未运行则自动启动
   const checkWorkflowStatus = async () => {
     try {
       const running = await invoke<boolean>('is_workflow_running')
@@ -117,9 +117,51 @@ function App() {
         } catch (e) {
           console.error('Failed to get current results:', e)
         }
+      } else {
+        // 工作流未运行，自动启动
+        autoStartWorkflow()
       }
     } catch (e) {
       console.error('Failed to check workflow status:', e)
+      // 检查失败也尝试自动启动
+      autoStartWorkflow()
+    }
+  }
+
+  // 自动启动工作流
+  const autoStartWorkflow = async () => {
+    // 等待配置加载完成
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
+    try {
+      const config = await invoke<AppConfig>('get_config')
+      const enabledCount = config.endpoints.filter((e: Endpoint) => e.enabled).length
+      
+      if (enabledCount === 0) {
+        addLog('info', '没有启用的端点，跳过自动启动')
+        return
+      }
+
+      setIsRunning(true)
+      setProgress({ current: 0, total: enabledCount, message: '正在自动启动工作流...' })
+      addLog('info', `自动启动工作流，测试 ${enabledCount} 个端点...`)
+      
+      const result = await invoke<WorkflowResult>('start_workflow')
+      setIsWorking(true)
+      setResults(result.results)
+      await refreshBindingCount()
+      
+      setProgress({ 
+        current: result.testCount, 
+        total: result.testCount, 
+        message: `已应用 ${result.appliedCount} 个绑定` 
+      })
+      addLog('success', `工作流已自动启动: 测试 ${result.testCount} 个端点，成功 ${result.successCount} 个，应用 ${result.appliedCount} 个绑定`)
+    } catch (e) {
+      console.error('Auto start workflow failed:', e)
+      addLog('warning', `自动启动失败: ${e}`)
+    } finally {
+      setIsRunning(false)
     }
   }
 

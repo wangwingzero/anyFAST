@@ -630,7 +630,7 @@ impl EndpointTester {
 
         // Send HTTP HEAD request
         let request = format!(
-            "HEAD {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: AnyRouter/1.0\r\nConnection: close\r\n\r\n",
+            "HEAD {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: anyrouter/1.0\r\nConnection: close\r\n\r\n",
             path, endpoint.domain
         );
 
