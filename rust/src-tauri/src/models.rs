@@ -315,19 +315,20 @@ mod tests {
             domain: "test.com".into(),
             enabled: true,
         };
-        // Original: 100ms, Optimized: 150ms -> original is better
+        // 新逻辑：传入的 IP 就是最优 IP（调用方已经选好了）
+        // 这里模拟原始 IP 就是最优的情况
         let result = EndpointResult::success_with_comparison(
             ep,
-            "1.2.3.4".into(),
-            150.0,
+            "5.6.7.8".into(),  // 传入原始 IP 作为最优
+            100.0,
             "5.6.7.8".into(),
             100.0,
         );
 
         assert!(result.success);
-        assert_eq!(result.ip, "5.6.7.8"); // Should use original IP
-        assert_eq!(result.latency, 100.0); // Should use original latency
-        assert!(result.use_original);
+        assert_eq!(result.ip, "5.6.7.8"); // 使用传入的 IP
+        assert_eq!(result.latency, 100.0);
+        assert!(result.use_original); // IP 等于原始 IP
     }
 
     #[test]
@@ -338,17 +339,18 @@ mod tests {
             domain: "test.com".into(),
             enabled: true,
         };
-        // Original == Optimized -> use original
+        // 传入的 IP 恰好等于原始 IP
         let result = EndpointResult::success_with_comparison(
             ep,
-            "1.2.3.4".into(),
+            "5.6.7.8".into(),
             100.0,
             "5.6.7.8".into(),
             100.0,
         );
 
-        assert!(result.use_original);
+        assert!(result.use_original); // IP 等于原始 IP
         assert_eq!(result.ip, "5.6.7.8");
+        assert_eq!(result.speedup_percent, 0.0); // 没有加速
     }
 
     #[test]

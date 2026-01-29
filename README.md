@@ -102,3 +102,147 @@ MIT License
 ## 致谢
 
 感谢 WONG 大佬和 anyrouter 大佬提供的中转服务！
+    │       ├── main.rs           # 入口
+    │       ├── lib.rs            # Tauri 命令
+    │       ├── models.rs         # 数据模型
+    │       ├── config.rs         # 配置管理
+    │       ├── endpoint_tester.rs # 端点测速引擎
+    │       ├── hosts_manager.rs  # Hosts 文件操作
+    │       ├── health_checker.rs # 健康检查
+    │       └── history.rs        # 历史记录
+    │
+    ├── package.json
+    ├── tailwind.config.js
+    └── vite.config.ts
+```
+
+## 核心功能
+
+### Cloudflare IP 优选
+
+自动识别 Cloudflare IP 段并使用优选列表测试：
+
+```rust
+// 自动检测 CF IP 范围
+const CF_RANGES: &[&str] = &[
+    "104.16.", "104.17.", "104.18.", "104.19.",
+    "104.20.", "104.21.", "104.22.", "104.23.",
+    "172.67.", "162.159.",
+];
+
+// 测试多个 CF 优选 IP，选择最快的
+```
+
+### 并发测试
+
+使用 tokio 异步运行时并发测试所有 IP：
+
+- 最多 8 个端点同时测试（Semaphore 控制）
+- 每个端点测试多个 IP（原始 IP + CF 优选 IP）
+- 5 秒连接超时，15 秒总超时
+- 自动选择延迟最低的 IP
+
+### 加速效果
+
+显示与原始 DNS 解析 IP 的对比：
+
+```
+端点名称    最优 IP          延迟      加速
+example    104.21.x.x       120ms    +35.2%
+```
+
+## 配置文件
+
+位置: `%APPDATA%\com.anyrouter\fast\config.json`
+
+```json
+{
+  "mode": "manual",
+  "check_interval": 30,
+  "slow_threshold": 50,
+  "failure_threshold": 3,
+  "minimize_to_tray": true,
+  "close_to_tray": false,
+  "clear_on_exit": false,
+  "cloudflare_ips": [],
+  "endpoints": [
+    {
+      "name": "示例端点",
+      "url": "https://example.com/v1",
+      "domain": "example.com",
+      "enabled": true
+    }
+  ]
+}
+```
+
+### 配置说明
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `mode` | 运行模式 (manual/auto) | manual |
+| `check_interval` | 自动模式检查间隔（秒） | 30 |
+| `slow_threshold` | 慢速阈值（%） | 50 |
+| `failure_threshold` | 连续失败次数阈值 | 3 |
+| `minimize_to_tray` | 最小化到托盘 | true |
+| `close_to_tray` | 关闭按钮最小化到托盘 | false |
+| `clear_on_exit` | 退出时清除 hosts 绑定 | false |
+| `cloudflare_ips` | 自定义 CF 优选 IP 列表 | [] |
+
+## 使用说明
+
+### 手动模式
+
+1. 点击「开始测速」按钮
+2. 等待所有端点测试完成
+3. 查看结果表格，确认延迟和加速效果
+4. 点击「一键应用」绑定所有可用端点
+5. 或点击单个端点的「应用」按钮
+
+### 自动模式
+
+1. 在设置页面切换到「自动」模式
+2. 配置检查间隔和阈值
+3. 程序将在后台自动检测和切换
+
+### 管理员权限
+
+修改 hosts 文件需要管理员权限。请右键以管理员身份运行程序。
+
+## 开发
+
+### 运行测试
+
+```bash
+cd rust
+
+# Rust 后端测试
+cd src-tauri && cargo test
+
+# 前端测试
+npm test
+```
+
+### 代码检查
+
+```bash
+cd rust/src-tauri
+
+# 格式化
+cargo fmt
+
+# Lint
+cargo clippy
+```
+
+## 许可证
+
+MIT License
+
+## 作者
+
+**hudawang**
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request！
