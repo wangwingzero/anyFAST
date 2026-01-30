@@ -4,18 +4,18 @@ import { Endpoint, AppConfig, UpdateInfo } from '../types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 
-// 默认端点
+// 默认端点（与后端 models.rs 保持一致）
 const DEFAULT_ENDPOINTS: Endpoint[] = [
   {
-    name: 'WZW 代理',
-    url: 'https://wzw.pp.ua/v1',
-    domain: 'wzw.pp.ua',
+    name: 'anyrouter大善人',
+    url: 'https://betterclau.de/claude/anyrouter.top',
+    domain: 'betterclau.de',
     enabled: true,
   },
   {
-    name: 'BetterClaude',
-    url: 'https://betterclau.de/claude/anyrouter.top',
-    domain: 'betterclau.de',
+    name: 'L站WONG大佬',
+    url: 'https://wzw.pp.ua/v1',
+    domain: 'wzw.pp.ua',
     enabled: true,
   },
 ]
