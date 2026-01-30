@@ -38,8 +38,8 @@ function App() {
   const [isWorking, setIsWorking] = useState(false)
   // 用户是否已拒绝管理员权限提升（当前会话内记住）
   const [userDeclinedAdmin, setUserDeclinedAdmin] = useState(false)
-  // 权限状态
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null)
+  // 权限状态（保留用于未来可能的 UI 显示）
+  const [, setHasPermission] = useState<boolean | null>(null)
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastIdCounter
