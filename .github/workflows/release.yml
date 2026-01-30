@@ -67,6 +67,18 @@ jobs:
       release_upload_url: ${{ steps.create-release.outputs.upload_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update README version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          sed -i "s/# anyFAST v[0-9]*\.[0-9]*\.[0-9]*/# anyFAST $VERSION/" README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --staged --quiet || git commit -m "docs: update README version to $VERSION"
+          git push origin HEAD:main
 
       - name: Create Release
         id: create-release
