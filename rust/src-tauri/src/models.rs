@@ -59,7 +59,7 @@ impl EndpointResult {
         } else {
             0.0
         };
-        
+
         // 始终使用测试中最快的 IP，不回退到原始 IP
         // use_original 仅用于标记当前使用的 IP 是否恰好是原始 IP
         let use_original = ip == original_ip;
@@ -292,7 +292,7 @@ mod tests {
         // 这里模拟原始 IP 就是最优的情况
         let result = EndpointResult::success_with_comparison(
             ep,
-            "5.6.7.8".into(),  // 传入原始 IP 作为最优
+            "5.6.7.8".into(), // 传入原始 IP 作为最优
             100.0,
             "5.6.7.8".into(),
             100.0,

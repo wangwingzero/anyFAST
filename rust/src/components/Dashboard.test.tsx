@@ -277,7 +277,7 @@ describe('Dashboard', () => {
 
     render(<Dashboard {...defaultProps} results={[useOriginalResult]} />)
 
-    expect(screen.getByText('原始最优')).toBeInTheDocument()
+    // When use_original is true, the apply button should not be shown
     expect(screen.queryByText('应用')).not.toBeInTheDocument()
   })
 

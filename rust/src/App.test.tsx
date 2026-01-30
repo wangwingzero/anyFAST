@@ -65,7 +65,8 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('仪表盘')).toBeInTheDocument()
+      // Use getAllByText since '仪表盘' appears in both sidebar and heading
+      expect(screen.getAllByText('仪表盘').length).toBeGreaterThan(0)
     })
   })
 
@@ -92,7 +93,8 @@ describe('App', () => {
 
     // The app should render without crashing
     await waitFor(() => {
-      expect(screen.getByText('仪表盘')).toBeInTheDocument()
+      // Use role query to be more specific - find the heading
+      expect(screen.getByRole('heading', { name: '仪表盘' })).toBeInTheDocument()
     }, { timeout: 5000 })
   })
 
@@ -100,7 +102,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('设置')).toBeInTheDocument()
+      expect(screen.getAllByText('设置').length).toBeGreaterThan(0)
     })
 
     // Click the settings nav item (in sidebar)
@@ -116,10 +118,10 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('运行日志')).toBeInTheDocument()
+      expect(screen.getAllByText('运行日志').length).toBeGreaterThan(0)
     })
 
-    fireEvent.click(screen.getByText('运行日志'))
+    fireEvent.click(screen.getAllByText('运行日志')[0])
 
     await waitFor(() => {
       expect(screen.getByText('查看操作记录和测试结果')).toBeInTheDocument()
@@ -167,7 +169,7 @@ describe('App', () => {
 
     // Navigate to logs
     await waitFor(() => {
-      fireEvent.click(screen.getByText('运行日志'))
+      fireEvent.click(screen.getAllByText('运行日志')[0])
     })
 
     await waitFor(() => {
@@ -209,7 +211,8 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('仪表盘')).toBeInTheDocument()
+      // Use getAllByText since '仪表盘' appears in both sidebar and heading
+      expect(screen.getAllByText('仪表盘').length).toBeGreaterThan(0)
     })
   })
 })
