@@ -205,8 +205,9 @@ describe('Dashboard', () => {
     // Test 1 and Test 2 appear in both endpoint list and results table
     expect(screen.getAllByText('Test 1').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Test 2').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('test1.com').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('test2.com').length).toBeGreaterThanOrEqual(1)
+    // Dashboard shows URL, not domain
+    expect(screen.getAllByText('https://test1.com/v1').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('https://test2.com/v1').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('100ms')).toBeInTheDocument()
     expect(screen.getByText('150ms')).toBeInTheDocument()
   })
