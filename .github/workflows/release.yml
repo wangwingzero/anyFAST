@@ -1,9 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: write
@@ -14,21 +15,43 @@ env:
 jobs:
   create-release:
     runs-on: ubuntu-latest
+    # 只在 CI 成功且 commit 有 version tag 时运行
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'main')
     outputs:
       release_id: ${{ steps.create-release.outputs.id }}
       release_upload_url: ${{ steps.create-release.outputs.upload_url }}
+      should_release: ${{ steps.check-tag.outputs.tag_name != '' }}
+      tag_name: ${{ steps.check-tag.outputs.tag_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for version tag
+        id: check-tag
+        run: |
+          TAG=$(git tag --points-at ${{ github.event.workflow_run.head_sha }} | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          echo "tag_name=$TAG" >> $GITHUB_OUTPUT
+          if [ -n "$TAG" ]; then
+            echo "Found release tag: $TAG"
+          else
+            echo "No release tag found, skipping release"
+          fi
 
       - name: Create Release
         id: create-release
+        if: steps.check-tag.outputs.tag_name != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.check-tag.outputs.tag_name }}
           draft: true
           generate_release_notes: true
 
   build-release:
     needs: create-release
+    if: needs.create-release.outputs.should_release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -122,6 +145,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
           files: |
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
@@ -130,21 +154,25 @@ jobs:
         if: matrix.os == 'macos-latest'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
           files: rust/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
 
       - name: Upload Linux packages
         if: matrix.os == 'ubuntu-latest'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
           files: |
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
 
   publish-release:
     needs: [create-release, build-release]
+    if: needs.create-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
           draft: false
