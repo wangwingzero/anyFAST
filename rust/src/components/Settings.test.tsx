@@ -15,21 +15,11 @@ describe('Settings', () => {
   ]
 
   const mockConfig: AppConfig = {
-    mode: 'auto',
-    check_interval: 30,
-    slow_threshold: 50,
-    failure_threshold: 3,
-    test_count: 3,
-    minimize_to_tray: true,
-    close_to_tray: true,
-    clear_on_exit: false,
-    cloudflare_ips: ['1.2.3.4'],
     endpoints: mockEndpoints,
     autostart: false,
   }
 
   const defaultProps = {
-    endpoints: mockEndpoints,
     config: mockConfig,
     onEndpointsChange: vi.fn(),
     onConfigChange: vi.fn(),
@@ -48,85 +38,34 @@ describe('Settings', () => {
     expect(screen.getByText('配置运行参数')).toBeInTheDocument()
   })
 
-  it('shows mode selection', () => {
+  it('shows system section with autostart toggle', () => {
     render(<Settings {...defaultProps} />)
 
-    expect(screen.getByText('手动模式')).toBeInTheDocument()
-    expect(screen.getByText('自动模式')).toBeInTheDocument()
+    expect(screen.getByText('系统')).toBeInTheDocument()
+    expect(screen.getByText('开机自启动')).toBeInTheDocument()
+    expect(screen.getByText('系统启动时自动运行 anyFAST')).toBeInTheDocument()
   })
 
-  it('shows auto mode options when auto is selected', () => {
+  it('shows advanced section with hosts file button', () => {
     render(<Settings {...defaultProps} />)
 
-    // Auto mode is default, should show additional options
-    expect(screen.getByText('检查间隔')).toBeInTheDocument()
-    expect(screen.getByText('慢速阈值')).toBeInTheDocument()
-    expect(screen.getByText('失败阈值')).toBeInTheDocument()
+    expect(screen.getByText('高级')).toBeInTheDocument()
+    expect(screen.getByText('Hosts 文件')).toBeInTheDocument()
+    expect(screen.getByText('打开')).toBeInTheDocument()
   })
 
-  it('hides auto mode options when manual is selected', () => {
-    const manualConfig = { ...mockConfig, mode: 'manual' as const }
-    render(<Settings {...defaultProps} config={manualConfig} />)
-
-    // Select manual mode
-    fireEvent.click(screen.getByText('手动模式'))
-
-    // Auto mode options should be hidden
-    expect(screen.queryByText('检查间隔')).not.toBeInTheDocument()
-  })
-
-  it('shows Cloudflare IPs section', () => {
+  it('shows about section with version info', () => {
     render(<Settings {...defaultProps} />)
 
-    expect(screen.getByText('Cloudflare 优选 IP')).toBeInTheDocument()
-    expect(screen.getByText(/自定义优选 IP/)).toBeInTheDocument()
-  })
-
-  it('shows minimize to tray toggle', () => {
-    render(<Settings {...defaultProps} />)
-
-    expect(screen.getByText('最小化时隐藏到托盘')).toBeInTheDocument()
-  })
-
-  it('auto-saves when changing mode', async () => {
-    const onConfigChange = vi.fn()
-    const { invoke } = await import('@tauri-apps/api/core')
-
-    render(<Settings {...defaultProps} onConfigChange={onConfigChange} />)
-
-    fireEvent.click(screen.getByText('手动模式'))
-
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('save_config', expect.any(Object))
-    })
-  })
-
-  it('calls onConfigChange after auto-save', async () => {
-    const onConfigChange = vi.fn()
-    const { invoke } = await import('@tauri-apps/api/core')
-    vi.mocked(invoke).mockResolvedValue(undefined)
-
-    render(<Settings {...defaultProps} onConfigChange={onConfigChange} />)
-
-    fireEvent.click(screen.getByText('手动模式'))
-
-    await waitFor(() => {
-      expect(onConfigChange).toHaveBeenCalled()
-    })
+    expect(screen.getByText('关于')).toBeInTheDocument()
+    expect(screen.getByText('当前版本')).toBeInTheDocument()
+    expect(screen.getByText('检查更新')).toBeInTheDocument()
   })
 
   it('shows restore defaults button', () => {
     render(<Settings {...defaultProps} />)
 
     expect(screen.getByText('恢复默认值')).toBeInTheDocument()
-  })
-
-  it('shows autostart toggle in system section', () => {
-    render(<Settings {...defaultProps} />)
-
-    expect(screen.getByText('系统')).toBeInTheDocument()
-    expect(screen.getByText('开机自启动')).toBeInTheDocument()
-    expect(screen.getByText('系统启动时自动运行 anyFAST')).toBeInTheDocument()
   })
 
   it('calls set_autostart when autostart toggle is clicked', async () => {
@@ -146,5 +85,49 @@ describe('Settings', () => {
         expect(invoke).toHaveBeenCalledWith('set_autostart', { enabled: true })
       })
     }
+  })
+
+  it('calls open_hosts_file when hosts button is clicked', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    vi.mocked(invoke).mockResolvedValue(undefined)
+
+    render(<Settings {...defaultProps} />)
+
+    const openButton = screen.getByText('打开')
+    fireEvent.click(openButton)
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('open_hosts_file')
+    })
+  })
+
+  it('calls check_for_update when check update button is clicked', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+
+    render(<Settings {...defaultProps} />)
+
+    const checkButton = screen.getByText('检查更新')
+    fireEvent.click(checkButton)
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('check_for_update')
+    })
+  })
+
+  it('restores defaults when restore button is clicked', async () => {
+    const onEndpointsChange = vi.fn()
+    const onConfigChange = vi.fn()
+    const { invoke } = await import('@tauri-apps/api/core')
+    vi.mocked(invoke).mockResolvedValue(undefined)
+
+    render(<Settings {...defaultProps} onEndpointsChange={onEndpointsChange} onConfigChange={onConfigChange} />)
+
+    const restoreButton = screen.getByText('恢复默认值')
+    fireEvent.click(restoreButton)
+
+    await waitFor(() => {
+      expect(onEndpointsChange).toHaveBeenCalled()
+      expect(invoke).toHaveBeenCalledWith('save_config', expect.any(Object))
+    })
   })
 })

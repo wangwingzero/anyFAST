@@ -70,7 +70,7 @@ mod tests {
         let manager = ConfigManager::with_path(config_path);
 
         let config = manager.load().unwrap();
-        assert_eq!(config.mode, "auto");
+        assert_eq!(config.check_interval, 30);
         assert_eq!(config.endpoints.len(), 2);
     }
 
@@ -81,19 +81,14 @@ mod tests {
         let manager = ConfigManager::with_path(config_path);
 
         let config = AppConfig {
-            mode: "manual".into(),
             check_interval: 60,
-            cloudflare_ips: vec!["1.2.3.4".into(), "5.6.7.8".into()],
             ..Default::default()
         };
 
         manager.save(&config).unwrap();
         let loaded = manager.load().unwrap();
 
-        assert_eq!(loaded.mode, "manual");
         assert_eq!(loaded.check_interval, 60);
-        assert_eq!(loaded.cloudflare_ips.len(), 2);
-        assert_eq!(loaded.cloudflare_ips[0], "1.2.3.4");
     }
 
     #[test]

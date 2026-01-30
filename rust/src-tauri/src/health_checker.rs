@@ -100,7 +100,6 @@ impl HealthChecker {
         let check_interval = config.check_interval;
         let slow_threshold = config.slow_threshold;
         let failure_threshold = config.failure_threshold;
-        let cloudflare_ips = config.cloudflare_ips.clone();
 
         // 获取启用的端点
         let endpoints: Vec<Endpoint> = config.endpoints.into_iter().filter(|e| e.enabled).collect();
@@ -135,7 +134,6 @@ impl HealthChecker {
                         // 执行健康检查
                         let check_result = Self::perform_check(
                             &endpoints,
-                            &cloudflare_ips,
                             &baselines,
                             &failure_counts,
                             slow_threshold,
@@ -162,7 +160,6 @@ impl HealthChecker {
                         if !check_result.needs_switch.is_empty() {
                             let switch_result = Self::perform_switch(
                                 &check_result.needs_switch,
-                                &cloudflare_ips,
                                 &baselines,
                                 &config_manager,
                             ).await;
@@ -191,13 +188,12 @@ impl HealthChecker {
     /// 执行健康检查
     async fn perform_check(
         endpoints: &[Endpoint],
-        cloudflare_ips: &[String],
         baselines: &Arc<Mutex<HashMap<String, f64>>>,
         failure_counts: &Arc<Mutex<HashMap<String, u32>>>,
         slow_threshold: u32,
         failure_threshold: u32,
     ) -> CheckResult {
-        let tester = EndpointTester::new(cloudflare_ips.to_vec());
+        let tester = EndpointTester::new(vec![]);
         let mut endpoints_health = Vec::new();
         let mut needs_switch = Vec::new();
 
@@ -293,11 +289,10 @@ impl HealthChecker {
     /// 执行切换
     async fn perform_switch(
         endpoints: &[Endpoint],
-        cloudflare_ips: &[String],
         baselines: &Arc<Mutex<HashMap<String, f64>>>,
         _config_manager: &ConfigManager,
     ) -> SwitchResult {
-        let tester = EndpointTester::new(cloudflare_ips.to_vec());
+        let tester = EndpointTester::new(vec![]);
 
         // 准备阶段：收集测试结果
         struct PendingSwitch {

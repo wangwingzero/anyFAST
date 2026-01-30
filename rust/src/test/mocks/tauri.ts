@@ -3,15 +3,6 @@ import type { AppConfig, EndpointResult, HistoryStats } from '../../types'
 
 // Default mock config
 export const mockConfig: AppConfig = {
-  mode: 'auto',
-  check_interval: 30,
-  slow_threshold: 50,
-  failure_threshold: 3,
-  test_count: 3,
-  minimize_to_tray: true,
-  close_to_tray: true,
-  clear_on_exit: false,
-  cloudflare_ips: [],
   endpoints: [
     {
       name: 'Test Endpoint 1',

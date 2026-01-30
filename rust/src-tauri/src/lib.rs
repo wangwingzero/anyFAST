@@ -67,7 +67,7 @@ async fn start_speed_test(state: State<'_, AppState>) -> Result<Vec<EndpointResu
         return Err("没有启用的端点".into());
     }
 
-    let tester = EndpointTester::new(config.cloudflare_ips);
+    let tester = EndpointTester::new(vec![]);
 
     // 保存 tester 以便取消
     {
@@ -339,10 +339,6 @@ async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 async fn start_auto_mode(state: State<'_, AppState>, app_handle: AppHandle) -> Result<(), String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
 
-    if config.mode != "auto" {
-        return Err("当前不是自动模式，请在设置中切换".into());
-    }
-
     // 原子检查并设置（单次锁操作避免竞态条件）
     let cancel_token = {
         let mut token = state.auto_mode_token.lock().await;
@@ -436,7 +432,7 @@ async fn start_workflow(
     let test_count = endpoints.len() as u32;
 
     // Step 2: 执行测速 (Requirement 3.1)
-    let tester = EndpointTester::new(config.cloudflare_ips.clone());
+    let tester = EndpointTester::new(vec![]);
 
     // 保存 tester 以便取消
     {
@@ -860,12 +856,6 @@ pub fn run() {
         .setup(|app| {
             let config_manager = ConfigManager::new();
 
-            // 检查是否需要自动启动
-            let should_auto_start = config_manager
-                .load()
-                .map(|c| c.mode == "auto")
-                .unwrap_or(false);
-
             let state = AppState {
                 config_manager: config_manager.clone(),
                 history_manager: HistoryManager::new(),
@@ -895,16 +885,9 @@ pub fn run() {
                             }
                         }
                         "quit" => {
-                            // 退出前检查是否需要清除 hosts
-                            if let Some(state) = app.try_state::<AppState>() {
-                                if let Ok(config) = state.config_manager.load() {
-                                    if config.clear_on_exit {
-                                        // 清除所有 anyFAST 管理的 hosts 绑定
-                                        let _ = hosts_ops::clear_all_anyfast_bindings();
-                                        let _ = hosts_ops::flush_dns();
-                                    }
-                                }
-                            }
+                            // 退出前始终清除 hosts（强制行为）
+                            let _ = hosts_ops::clear_all_anyfast_bindings();
+                            let _ = hosts_ops::flush_dns();
                             app.exit(0);
                         }
                         _ => {}
@@ -926,54 +909,43 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // 处理窗口关闭事件
+            // 处理窗口关闭事件 - 始终最小化到托盘
             let app_handle = app.handle().clone();
             if let Some(window) = app.get_webview_window("main") {
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
-                        // 检查配置是否最小化到托盘
-                        if let Some(state) = app_handle.try_state::<AppState>() {
-                            if let Ok(config) = state.config_manager.load() {
-                                if config.close_to_tray {
-                                    // 阻止关闭，改为隐藏窗口
-                                    api.prevent_close();
-                                    if let Some(win) = app_handle.get_webview_window("main") {
-                                        let _ = win.hide();
-                                    }
-                                }
-                            }
+                        // 阻止关闭，改为隐藏窗口到托盘
+                        api.prevent_close();
+                        if let Some(win) = app_handle.get_webview_window("main") {
+                            let _ = win.hide();
                         }
                     }
                 });
             }
 
-            // 如果配置为自动模式，启动时自动开始健康检查
-            if should_auto_start {
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    // 延迟 2 秒启动，等待应用完全初始化
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            // 自动启动健康检查
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // 延迟 2 秒启动，等待应用完全初始化
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-                    // 调用 start_auto_mode
-                    if let Some(state) = app_handle.try_state::<AppState>() {
-                        let config = state.config_manager.load().ok();
-                        if let Some(config) = config {
-                            if config.mode == "auto" {
-                                let cancel_token = CancellationToken::new();
-                                {
-                                    let mut token = state.auto_mode_token.lock().await;
-                                    *token = Some(cancel_token.clone());
-                                }
-
-                                // start() 现在是同步的，在内部 spawn 任务
-                                let checker = state.health_checker.lock().await;
-                                checker.start(app_handle.clone(), config);
-                                // 锁在这里立即释放
-                            }
+                // 调用 start_auto_mode
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    let config = state.config_manager.load().ok();
+                    if let Some(config) = config {
+                        let cancel_token = CancellationToken::new();
+                        {
+                            let mut token = state.auto_mode_token.lock().await;
+                            *token = Some(cancel_token.clone());
                         }
+
+                        // start() 现在是同步的，在内部 spawn 任务
+                        let checker = state.health_checker.lock().await;
+                        checker.start(app_handle.clone(), config);
+                        // 锁在这里立即释放
                     }
-                });
-            }
+                }
+            });
 
             Ok(())
         })

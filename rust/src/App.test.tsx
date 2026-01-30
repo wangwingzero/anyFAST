@@ -8,15 +8,6 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 const mockConfig = {
-  mode: 'auto',
-  check_interval: 30,
-  slow_threshold: 50,
-  failure_threshold: 3,
-  test_count: 3,
-  minimize_to_tray: true,
-  close_to_tray: true,
-  clear_on_exit: false,
-  cloudflare_ips: [],
   autostart: false,
   endpoints: [
     { name: 'Test 1', url: 'https://test1.com/v1', domain: 'test1.com', enabled: true },

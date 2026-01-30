@@ -145,8 +145,6 @@ pub struct WorkflowResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    #[serde(default = "default_mode")]
-    pub mode: String,
     #[serde(default = "default_check_interval")]
     pub check_interval: u64,
     #[serde(default = "default_slow_threshold")]
@@ -155,16 +153,8 @@ pub struct AppConfig {
     pub failure_threshold: u32,
     #[serde(default = "default_test_count")]
     pub test_count: u32,
-    #[serde(default = "default_minimize")]
-    pub minimize_to_tray: bool,
-    #[serde(default = "default_close_to_tray")]
-    pub close_to_tray: bool,
-    #[serde(default = "default_clear_on_exit")]
-    pub clear_on_exit: bool,
     #[serde(default = "default_autostart")]
     pub autostart: bool,
-    #[serde(default)]
-    pub cloudflare_ips: Vec<String>,
     #[serde(default = "default_endpoints")]
     pub endpoints: Vec<Endpoint>,
 }
@@ -172,24 +162,16 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            mode: default_mode(),
             check_interval: default_check_interval(),
             slow_threshold: default_slow_threshold(),
             failure_threshold: default_failure_threshold(),
             test_count: default_test_count(),
-            minimize_to_tray: default_minimize(),
-            close_to_tray: default_close_to_tray(),
-            clear_on_exit: default_clear_on_exit(),
             autostart: default_autostart(),
-            cloudflare_ips: Vec::new(),
             endpoints: default_endpoints(),
         }
     }
 }
 
-fn default_mode() -> String {
-    "auto".into()
-}
 fn default_check_interval() -> u64 {
     30
 } // 30秒检查间隔
@@ -202,15 +184,6 @@ fn default_failure_threshold() -> u32 {
 fn default_test_count() -> u32 {
     3
 }
-fn default_minimize() -> bool {
-    true
-}
-fn default_close_to_tray() -> bool {
-    true
-} // 关闭按钮最小化到托盘
-fn default_clear_on_exit() -> bool {
-    false
-} // 退出时清除 hosts 绑定（默认关闭）
 
 fn default_autostart() -> bool {
     false
@@ -357,16 +330,11 @@ mod tests {
     fn test_app_config_default() {
         let config = AppConfig::default();
 
-        assert_eq!(config.mode, "auto");
         assert_eq!(config.check_interval, 30);
         assert_eq!(config.slow_threshold, 50);
         assert_eq!(config.failure_threshold, 3);
         assert_eq!(config.test_count, 3);
-        assert!(config.minimize_to_tray);
-        assert!(config.close_to_tray);
-        assert!(!config.clear_on_exit); // 默认关闭
         assert!(!config.autostart); // 默认关闭
-        assert!(config.cloudflare_ips.is_empty());
         assert_eq!(config.endpoints.len(), 2);
     }
 
@@ -376,7 +344,6 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let parsed: AppConfig = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(config.mode, parsed.mode);
         assert_eq!(config.check_interval, parsed.check_interval);
         assert_eq!(config.endpoints.len(), parsed.endpoints.len());
     }

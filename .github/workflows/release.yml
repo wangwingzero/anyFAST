@@ -108,6 +108,10 @@ jobs:
           $config.bundle | Add-Member -NotePropertyName "resources" -NotePropertyValue @{"binaries/anyfast-service-x86_64-pc-windows-msvc.exe" = "anyfast-service.exe"} -Force
           $config | ConvertTo-Json -Depth 10 | Set-Content tauri.conf.json
 
+      - name: Clean old bundles
+        shell: bash
+        run: rm -rf rust/src-tauri/target/${{ matrix.target }}/release/bundle
+
       - name: Build Tauri app
         working-directory: rust
         run: npm run tauri build -- --target ${{ matrix.target }}

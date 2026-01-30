@@ -28,15 +28,6 @@ export interface WorkflowResult {
 }
 
 export interface AppConfig {
-  mode: 'manual' | 'auto'
-  check_interval: number      // 健康检查间隔（秒）
-  slow_threshold: number      // 慢速阈值（百分比，如 50 表示比基准慢 50%）
-  failure_threshold: number   // 连续失败次数阈值
-  test_count: number
-  minimize_to_tray: boolean
-  close_to_tray: boolean      // 关闭按钮最小化到托盘
-  clear_on_exit: boolean      // 退出时清除 hosts 绑定
-  cloudflare_ips: string[]
   endpoints: Endpoint[]
   autostart: boolean          // 开机自启动
 }

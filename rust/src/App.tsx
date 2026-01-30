@@ -400,7 +400,6 @@ function App() {
         )}
         {currentView === 'settings' && (
           <Settings
-            endpoints={endpoints}
             config={config}
             onEndpointsChange={setEndpoints}
             onConfigChange={setConfig}
