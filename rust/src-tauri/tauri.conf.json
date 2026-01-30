@@ -39,9 +39,6 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "resources": {
-      "binaries/anyfast-service-x86_64-pc-windows-msvc.exe": "anyfast-service.exe"
-    },
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",

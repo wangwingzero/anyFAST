@@ -159,6 +159,15 @@ jobs:
           New-Item -ItemType Directory -Path binaries -Force | Out-Null
           Copy-Item target/release/anyfast-service.exe binaries/anyfast-service-x86_64-pc-windows-msvc.exe
 
+      - name: Configure Windows resources (Windows only)
+        if: matrix.os == 'windows-latest'
+        working-directory: rust/src-tauri
+        shell: pwsh
+        run: |
+          $config = Get-Content tauri.conf.json | ConvertFrom-Json
+          $config.bundle | Add-Member -NotePropertyName "resources" -NotePropertyValue @{"binaries/anyfast-service-x86_64-pc-windows-msvc.exe" = "anyfast-service.exe"} -Force
+          $config | ConvertTo-Json -Depth 10 | Set-Content tauri.conf.json
+
       - name: Clean old bundles
         shell: bash
         run: rm -rf rust/src-tauri/target/${{ matrix.target }}/release/bundle
