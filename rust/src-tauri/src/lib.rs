@@ -853,6 +853,7 @@ async fn restart_as_admin() -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let config_manager = ConfigManager::new();
 

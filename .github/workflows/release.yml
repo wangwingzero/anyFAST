@@ -175,8 +175,6 @@ jobs:
       - name: Build Tauri app
         working-directory: rust
         run: npm run tauri build -- --target ${{ matrix.target }}
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
 
       - name: Upload Windows artifacts
         if: matrix.os == 'windows-latest'
@@ -204,6 +202,31 @@ jobs:
     needs: [create-release, build-release]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+          
+      - name: Generate latest.json for updater
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          cat > latest.json << EOF
+          {
+            "version": "$VERSION",
+            "notes": "Release v$VERSION",
+            "pub_date": "$RELEASE_DATE",
+            "platforms": {
+              "windows-x86_64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v$VERSION/anyFAST_${VERSION}_x64-setup.exe"
+              }
+            }
+          }
+          EOF
+          
+      - name: Upload latest.json
+        uses: softprops/action-gh-release@v2
+        with:
+          files: latest.json
+      
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:

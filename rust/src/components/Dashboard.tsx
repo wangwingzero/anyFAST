@@ -271,7 +271,7 @@ export function Dashboard({
                 <span className={`inline-block w-2 h-2 rounded-full ${endpoint.enabled ? 'bg-apple-green' : 'bg-apple-gray-300'}`} />
               </button>
               <span className="font-medium">{endpoint.name}</span>
-              <span className="text-apple-gray-400 font-mono">{endpoint.domain}</span>
+              <span className="text-apple-gray-400 font-mono">{endpoint.url}</span>
               <button
                 onClick={() => removeEndpoint(index)}
                 className="p-0.5 hover:bg-apple-red/20 hover:text-apple-red rounded transition-colors"
@@ -425,7 +425,7 @@ function ResultRow({
           {endpoint.name}
         </span>
         <span className="text-xs lg:text-sm text-apple-gray-300 font-mono truncate">
-          {endpoint.domain}
+          {endpoint.url}
         </span>
         <span className="text-xs lg:text-sm text-apple-gray-300">-</span>
         <span className="text-xs lg:text-sm text-apple-gray-300">待测试</span>
@@ -495,7 +495,7 @@ function ResultRow({
         {endpoint.name}
       </span>
       <span className="text-xs lg:text-sm text-apple-gray-400 font-mono truncate">
-        {endpoint.domain}
+        {endpoint.url}
       </span>
       <span className={`text-xs lg:text-sm font-mono truncate ${isLive ? 'text-apple-blue' : 'text-apple-gray-400'}`} title={isLive ? '实时最优 IP' : '测速结果 IP'}>
         {isLive && <span className="inline-block w-1.5 h-1.5 rounded-full bg-apple-green mr-1 animate-pulse" />}

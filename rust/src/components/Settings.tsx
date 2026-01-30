@@ -223,13 +223,16 @@ export function Settings({
                     {updateInfo.releaseNotes && (
                       <p className="text-xs text-apple-gray-400 line-clamp-2">{updateInfo.releaseNotes}</p>
                     )}
-                    <button
-                      onClick={openReleasePage}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-green text-white text-sm font-medium rounded-xl hover:bg-apple-green/90 transition-colors mt-2"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      前往下载
-                    </button>
+                    
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        onClick={openReleasePage}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-green text-white text-sm font-medium rounded-xl hover:bg-apple-green/90 transition-colors"
+                      >
+                        <Download className="w-4 h-4" />
+                        前往下载
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">

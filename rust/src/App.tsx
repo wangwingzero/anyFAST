@@ -36,6 +36,10 @@ function App() {
   const [showAdminDialog, setShowAdminDialog] = useState(false)
   const [healthStatus, setHealthStatus] = useState<EndpointHealth[]>([])
   const [isWorking, setIsWorking] = useState(false)
+  // 用户是否已拒绝管理员权限提升（当前会话内记住）
+  const [userDeclinedAdmin, setUserDeclinedAdmin] = useState(false)
+  // 权限状态
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null)
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastIdCounter
@@ -46,26 +50,7 @@ function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
-  // 处理权限错误，提示用户重启为管理员
-  const handlePermissionError = useCallback((error: unknown) => {
-    if (isPermissionError(error)) {
-      setShowAdminDialog(true)
-      return true
-    }
-    return false
-  }, [])
-
-  // 以管理员身份重启
-  const restartAsAdmin = useCallback(async () => {
-    try {
-      await invoke('restart_as_admin')
-    } catch {
-      // 用户取消或出错
-      setShowAdminDialog(false)
-    }
-  }, [])
-
-  // 添加日志
+  // 添加日志（放在前面，因为其他函数依赖它）
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
     const now = new Date()
     const timestamp = now.toLocaleTimeString('zh-CN', { hour12: false })
@@ -79,6 +64,53 @@ function App() {
     })
   }, [])
 
+  // 处理权限错误，提示用户重启为管理员
+  // 如果用户已经拒绝过，不再弹出对话框
+  const handlePermissionError = useCallback((error: unknown) => {
+    if (isPermissionError(error)) {
+      if (!userDeclinedAdmin) {
+        setShowAdminDialog(true)
+      }
+      return true
+    }
+    return false
+  }, [userDeclinedAdmin])
+
+  // 以管理员身份重启
+  const restartAsAdmin = useCallback(async () => {
+    try {
+      await invoke('restart_as_admin')
+    } catch {
+      // 用户取消或出错
+      setShowAdminDialog(false)
+    }
+  }, [])
+
+  // 用户拒绝管理员权限
+  const declineAdmin = useCallback(() => {
+    setUserDeclinedAdmin(true)
+    setShowAdminDialog(false)
+    addLog('info', '已跳过管理员权限，部分功能可能受限')
+  }, [addLog])
+
+  // 检查权限状态
+  const checkPermission = useCallback(async (): Promise<boolean> => {
+    try {
+      const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
+      setHasPermission(status.hasPermission)
+      if (status.isUsingService) {
+        addLog('info', '已连接到 anyFAST Service')
+      } else if (status.hasPermission) {
+        addLog('info', '以管理员身份运行')
+      }
+      return status.hasPermission
+    } catch (e) {
+      console.error('Failed to check permission:', e)
+      setHasPermission(false)
+      return false
+    }
+  }, [addLog])
+
   // 清空日志
   const clearLogs = useCallback(() => {
     setLogs([])
@@ -86,9 +118,7 @@ function App() {
   }, [addLog])
 
   useEffect(() => {
-    loadConfig()
-    refreshBindingCount()
-    checkWorkflowStatus()
+    initializeApp()
 
     // 监听健康检查结果事件
     const unlistenHealth = listen<{ endpoints_health: EndpointHealth[] }>('health-check-result', (event) => {
@@ -99,6 +129,25 @@ function App() {
       unlistenHealth.then(fn => fn())
     }
   }, [])
+
+  // 应用初始化流程
+  const initializeApp = async () => {
+    await loadConfig()
+    await refreshBindingCount()
+    
+    // 先检查权限状态
+    const hasPermission = await checkPermission()
+    
+    if (!hasPermission) {
+      // 没有权限，显示对话框让用户选择
+      setShowAdminDialog(true)
+      addLog('warning', '没有 hosts 文件写入权限，请选择提升权限或跳过')
+      return
+    }
+    
+    // 有权限，继续检查工作流状态
+    await checkWorkflowStatus()
+  }
 
   // 检查工作流运行状态，如果未运行则自动启动
   const checkWorkflowStatus = async () => {
@@ -353,15 +402,18 @@ function App() {
                 <p className="text-sm text-gray-500">Service 连接失败，需要提升权限</p>
               </div>
             </div>
-            <p className="text-sm text-gray-600 mb-6">
+            <p className="text-sm text-gray-600 mb-4">
               修改 hosts 文件需要管理员权限。是否以管理员身份重新启动应用？
+            </p>
+            <p className="text-xs text-gray-400 mb-6">
+              提示：安装 anyFAST Service 后可免管理员权限运行
             </p>
             <div className="flex gap-3">
               <button
-                onClick={() => setShowAdminDialog(false)}
+                onClick={declineAdmin}
                 className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
               >
-                取消
+                跳过（仅查看）
               </button>
               <button
                 onClick={restartAsAdmin}

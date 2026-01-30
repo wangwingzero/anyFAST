@@ -167,6 +167,23 @@ npm run tauri build
 # - NSIS: src-tauri/target/release/bundle/nsis/
 ```
 
+### 应用内更新
+
+本项目使用 Tauri Updater 插件实现应用内自动更新，**不使用签名**（`createUpdaterArtifacts: "v1Compatible"`）。
+
+更新流程：
+1. 用户点击"检查更新"
+2. 前端调用 `@tauri-apps/plugin-updater` 的 `check()` 方法
+3. 从 GitHub Releases 下载 `latest.json` 获取更新信息
+4. 下载新版本安装包并自动安装
+5. 重启应用完成更新
+
+相关配置：
+- `tauri.conf.json` 中 `plugins.updater.endpoints` 指向 GitHub Releases
+- `createUpdaterArtifacts: "v1Compatible"` 表示不签名
+- 前端依赖: `@tauri-apps/plugin-updater`, `@tauri-apps/plugin-process`
+- 后端依赖: `tauri-plugin-updater`, `tauri-plugin-process`
+
 ### 运行测试
 
 ```bash
