@@ -71,7 +71,7 @@ mod tests {
 
         let config = manager.load().unwrap();
         assert_eq!(config.check_interval, 30);
-        assert_eq!(config.endpoints.len(), 2);
+        assert_eq!(config.endpoints.len(), 15); // 15个默认站点
     }
 
     #[test]
@@ -108,9 +108,9 @@ mod tests {
         manager.save(&config).unwrap();
         let loaded = manager.load().unwrap();
 
-        assert_eq!(loaded.endpoints.len(), 3);
-        assert_eq!(loaded.endpoints[2].name, "Custom");
-        assert!(!loaded.endpoints[2].enabled);
+        assert_eq!(loaded.endpoints.len(), 16); // 15个默认 + 1个自定义
+        assert_eq!(loaded.endpoints[15].name, "Custom");
+        assert!(!loaded.endpoints[15].enabled);
     }
 
     #[test]

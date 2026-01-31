@@ -272,6 +272,71 @@ fn refresh_service_status() -> bool {
     hosts_ops::refresh_service_status()
 }
 
+/// Check if macOS helper is available
+#[tauri::command]
+fn is_macos_helper_available() -> bool {
+    hosts_ops::is_macos_helper_available()
+}
+
+/// Install macOS helper with setuid bit using osascript (shows system password dialog)
+/// Returns Ok(true) if installation succeeded, Ok(false) if helper not found in bundle
+#[tauri::command]
+async fn install_macos_helper() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+
+        // Get the bundled helper path
+        let bundled_path = match hosts_ops::get_bundled_helper_path() {
+            Some(p) => p,
+            None => return Ok(false), // Helper not found in bundle
+        };
+
+        let install_path = "/usr/local/bin/anyfast-helper-macos";
+
+        // Build the installation script
+        let script = format!(
+            r#"
+            do shell script "cp '{}' '{}' && chown root:wheel '{}' && chmod 4755 '{}'" with administrator privileges
+            "#,
+            bundled_path.display(),
+            install_path,
+            install_path,
+            install_path
+        );
+
+        // Execute with osascript (will show system password dialog)
+        let output = Command::new("osascript")
+            .args(["-e", &script])
+            .output()
+            .map_err(|e| format!("无法执行 osascript: {}", e))?;
+
+        if output.status.success() {
+            // Refresh the helper status so it gets re-detected without restart
+            hosts_ops::refresh_macos_helper_status();
+            Ok(true)
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("User canceled") || stderr.contains("canceled") {
+                Err("用户取消了安装".to_string())
+            } else {
+                Err(format!("安装失败: {}", stderr))
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(false)
+    }
+}
+
+/// Check if bundled helper exists (for showing install button)
+#[tauri::command]
+fn has_bundled_helper() -> bool {
+    hosts_ops::get_bundled_helper_path().is_some()
+}
+
 #[tauri::command]
 fn get_hosts_path() -> String {
     #[cfg(windows)]
@@ -964,6 +1029,9 @@ pub fn run() {
             is_service_running,
             get_permission_status,
             refresh_service_status,
+            is_macos_helper_available,
+            install_macos_helper,
+            has_bundled_helper,
             get_hosts_path,
             open_hosts_file,
             get_history_stats,

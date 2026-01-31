@@ -192,15 +192,93 @@ fn default_autostart() -> bool {
 fn default_endpoints() -> Vec<Endpoint> {
     vec![
         Endpoint {
+            name: "WONG公益站".into(),
+            url: "https://betterclau.de/claude/wzw.pp.ua".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
             name: "anyrouter大善人".into(),
             url: "https://betterclau.de/claude/anyrouter.top".into(),
             domain: "betterclau.de".into(),
             enabled: true,
         },
         Endpoint {
-            name: "L站WONG大佬".into(),
-            url: "https://wzw.pp.ua/v1".into(),
-            domain: "wzw.pp.ua".into(),
+            name: "henryxiaoyang".into(),
+            url: "https://betterclau.de/claude/runanytime.hxi.me".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "Cyrus (鸭佬)".into(),
+            url: "https://betterclau.de/claude/free.duckcoding.com".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "ByteBender".into(),
+            url: "https://betterclau.de/claude/elysiver.h-e.top".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "beizhi (Wind Hub)".into(),
+            url: "https://betterclau.de/claude/api.224442.xyz".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "kkkyyx (不过减速带)".into(),
+            url: "https://betterclau.de/claude/kfc-api.sxxe.net".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "钟阮".into(),
+            url: "https://betterclau.de/claude/gyapi.zxiaoruan.cn".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "sc0152 (DEV88)".into(),
+            url: "https://betterclau.de/claude/api.dev88.tech".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "ZeroLiya (小呆)".into(),
+            url: "https://betterclau.de/claude/new.184772.xyz".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "freenessfish".into(),
+            url: "https://betterclau.de/claude/welfare.apikey.cc".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "Mitchll".into(),
+            url: "https://betterclau.de/claude/api.mitchll.com".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "mazhichen等四位大佬".into(),
+            url: "https://betterclau.de/claude/api.hotaruapi.top".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "TechnologyStar".into(),
+            url: "https://betterclau.de/claude/aidrouter.qzz.io".into(),
+            domain: "betterclau.de".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "Simonzhu".into(),
+            url: "https://betterclau.de/claude/ai.zzhdsgsss.xyz".into(),
+            domain: "betterclau.de".into(),
             enabled: true,
         },
     ]
@@ -335,7 +413,10 @@ mod tests {
         assert_eq!(config.failure_threshold, 3);
         assert_eq!(config.test_count, 3);
         assert!(!config.autostart); // 默认关闭
-        assert_eq!(config.endpoints.len(), 2);
+        assert_eq!(config.endpoints.len(), 15); // 15个默认站点
+        // 第一个是公益站，默认启用
+        assert_eq!(config.endpoints[0].name, "WONG公益站");
+        assert!(config.endpoints[0].enabled);
     }
 
     #[test]

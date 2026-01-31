@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+// import { relaunch } from '@tauri-apps/plugin-process' // 保留以备将来使用
 import { Sidebar } from './components/Sidebar'
 import { Dashboard } from './components/Dashboard'
 import { Settings } from './components/Settings'
@@ -12,6 +13,10 @@ import { Endpoint, EndpointResult, AppConfig, LogEntry, EndpointHealth, Workflow
 type View = 'dashboard' | 'settings' | 'logs' | 'history'
 
 let toastIdCounter = 0
+
+// 检测操作系统
+const isMacOS = navigator.userAgent.includes('Mac')
+// const isWindows = navigator.userAgent.includes('Windows') // 保留以备将来使用
 
 // 检查是否是权限错误
 const isPermissionError = (error: unknown): boolean => {
@@ -38,8 +43,12 @@ function App() {
   const [isWorking, setIsWorking] = useState(false)
   // 用户是否已拒绝管理员权限提升（当前会话内记住）
   const [userDeclinedAdmin, setUserDeclinedAdmin] = useState(false)
-  // 权限状态（保留用于未来可能的 UI 显示）
+  // 权限状态
   const [, setHasPermission] = useState<boolean | null>(null)
+  // 是否正在安装 helper
+  const [isInstallingHelper, setIsInstallingHelper] = useState(false)
+  // 是否有内置 helper（macOS）
+  const [hasBundledHelper, setHasBundledHelper] = useState(false)
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastIdCounter
@@ -86,6 +95,53 @@ function App() {
     }
   }, [])
 
+  // macOS: 安装 helper（使用 osascript 弹出系统密码框）
+  // 注意：这个函数内部调用了 checkPermission 和 checkWorkflowStatus，
+  // 由于 JavaScript 函数提升，这些函数在运行时是可用的
+  const installMacOSHelper = async () => {
+    try {
+      setIsInstallingHelper(true)
+      addLog('info', '正在安装 macOS Helper...')
+      const result = await invoke<boolean>('install_macos_helper')
+      
+      if (result) {
+        addLog('success', 'Helper 安装成功！')
+        showToast('success', '安装成功')
+        setShowAdminDialog(false)
+        setHasPermission(true)
+        
+        // 安装成功后，检查权限并继续工作流
+        // 不需要重启，因为后端已经刷新了缓存
+        setTimeout(async () => {
+          try {
+            const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
+            if (status.hasPermission) {
+              addLog('info', '权限验证成功，正在启动工作流...')
+              // 直接调用自动启动工作流
+              autoStartWorkflow()
+            }
+          } catch (e) {
+            console.error('Failed to verify permission after helper install:', e)
+          }
+        }, 500)
+      } else {
+        // Helper 不在 bundle 中，提示手动安装
+        addLog('warning', '未找到内置 Helper，请从 GitHub 下载')
+        showToast('warning', '请从 GitHub Release 下载 Helper')
+      }
+    } catch (e) {
+      const errorStr = String(e)
+      if (errorStr.includes('取消')) {
+        addLog('info', '用户取消了安装')
+      } else {
+        addLog('error', `安装失败: ${e}`)
+        showToast('error', `安装失败: ${e}`)
+      }
+    } finally {
+      setIsInstallingHelper(false)
+    }
+  }
+
   // 用户拒绝管理员权限
   const declineAdmin = useCallback(() => {
     setUserDeclinedAdmin(true)
@@ -99,7 +155,7 @@ function App() {
       const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
       setHasPermission(status.hasPermission)
       if (status.isUsingService) {
-        addLog('info', '已连接到 anyFAST Service')
+        addLog('info', isMacOS ? '已连接到 anyFAST Helper' : '已连接到 anyFAST Service')
       } else if (status.hasPermission) {
         addLog('info', '以管理员身份运行')
       }
@@ -110,6 +166,18 @@ function App() {
       return false
     }
   }, [addLog])
+
+  // 检查是否有内置 helper（macOS）
+  const checkBundledHelper = useCallback(async () => {
+    if (isMacOS) {
+      try {
+        const has = await invoke<boolean>('has_bundled_helper')
+        setHasBundledHelper(has)
+      } catch {
+        setHasBundledHelper(false)
+      }
+    }
+  }, [])
 
   // 清空日志
   const clearLogs = useCallback(() => {
@@ -134,11 +202,12 @@ function App() {
   const initializeApp = async () => {
     await loadConfig()
     await refreshBindingCount()
+    await checkBundledHelper()
     
     // 先检查权限状态
-    const hasPermission = await checkPermission()
+    const permissionOk = await checkPermission()
     
-    if (!hasPermission) {
+    if (!permissionOk) {
       // 没有权限，显示对话框让用户选择
       setShowAdminDialog(true)
       addLog('warning', '没有 hosts 文件写入权限，请选择提升权限或跳过')
@@ -399,15 +468,66 @@ function App() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">需要管理员权限</h3>
-                <p className="text-sm text-gray-500">Service 连接失败，需要提升权限</p>
+                <p className="text-sm text-gray-500">
+                  {isMacOS 
+                    ? (hasBundledHelper ? '需要安装 Helper 组件' : '需要手动安装 Helper')
+                    : 'Service 连接失败，需要提升权限'
+                  }
+                </p>
               </div>
             </div>
-            <p className="text-sm text-gray-600 mb-4">
-              修改 hosts 文件需要管理员权限。是否以管理员身份重新启动应用？
-            </p>
-            <p className="text-xs text-gray-400 mb-6">
-              提示：安装 anyFAST Service 后可免管理员权限运行
-            </p>
+            
+            {isMacOS ? (
+              // macOS 说明
+              <div className="mb-4">
+                {hasBundledHelper ? (
+                  <p className="text-sm text-gray-600">
+                    点击下方按钮安装 Helper，系统会弹出密码输入框。安装后即可无感修改 hosts 文件。
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-600">
+                    未找到内置 Helper，请从 
+                    <a 
+                      href="https://github.com/wangwingzero/anyFAST/releases" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-blue-500 hover:underline mx-1"
+                    >
+                      GitHub Release
+                    </a>
+                    下载并手动安装。
+                  </p>
+                )}
+              </div>
+            ) : (
+              // Windows 说明
+              <div className="mb-4">
+                <p className="text-sm text-gray-600 mb-3">
+                  修改 hosts 文件需要管理员权限。您可以选择：
+                </p>
+                <ul className="text-sm text-gray-600 space-y-2 ml-4">
+                  <li className="flex items-start gap-2">
+                    <span className="text-orange-500 mt-0.5">•</span>
+                    <span>以管理员身份重启（每次启动需要确认）</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-green-500 mt-0.5">•</span>
+                    <span>
+                      安装 anyFAST Service（推荐，一次安装后续无感）
+                      <a 
+                        href="https://github.com/wangwingzero/anyFAST/releases" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:underline ml-1"
+                      >
+                        下载
+                      </a>
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            )}
+            
             <div className="flex gap-3">
               <button
                 onClick={declineAdmin}
@@ -415,12 +535,43 @@ function App() {
               >
                 跳过（仅查看）
               </button>
-              <button
-                onClick={restartAsAdmin}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors"
-              >
-                以管理员身份重启
-              </button>
+              {isMacOS ? (
+                hasBundledHelper ? (
+                  <button
+                    onClick={installMacOSHelper}
+                    disabled={isInstallingHelper}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isInstallingHelper ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        安装中...
+                      </>
+                    ) : (
+                      '安装 Helper'
+                    )}
+                  </button>
+                ) : (
+                  <a
+                    href="https://github.com/wangwingzero/anyFAST/releases"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors text-center"
+                  >
+                    前往下载
+                  </a>
+                )
+              ) : (
+                <button
+                  onClick={restartAsAdmin}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors"
+                >
+                  以管理员身份重启
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -7,15 +7,93 @@ import { open } from '@tauri-apps/plugin-shell'
 // 默认端点（与后端 models.rs 保持一致）
 const DEFAULT_ENDPOINTS: Endpoint[] = [
   {
+    name: 'WONG公益站',
+    url: 'https://betterclau.de/claude/wzw.pp.ua',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
     name: 'anyrouter大善人',
     url: 'https://betterclau.de/claude/anyrouter.top',
     domain: 'betterclau.de',
     enabled: true,
   },
   {
-    name: 'L站WONG大佬',
-    url: 'https://wzw.pp.ua/v1',
-    domain: 'wzw.pp.ua',
+    name: 'henryxiaoyang',
+    url: 'https://betterclau.de/claude/runanytime.hxi.me',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'Cyrus (鸭佬)',
+    url: 'https://betterclau.de/claude/free.duckcoding.com',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'ByteBender',
+    url: 'https://betterclau.de/claude/elysiver.h-e.top',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'beizhi (Wind Hub)',
+    url: 'https://betterclau.de/claude/api.224442.xyz',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'kkkyyx (不过减速带)',
+    url: 'https://betterclau.de/claude/kfc-api.sxxe.net',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: '钟阮',
+    url: 'https://betterclau.de/claude/gyapi.zxiaoruan.cn',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'sc0152 (DEV88)',
+    url: 'https://betterclau.de/claude/api.dev88.tech',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'ZeroLiya (小呆)',
+    url: 'https://betterclau.de/claude/new.184772.xyz',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'freenessfish',
+    url: 'https://betterclau.de/claude/welfare.apikey.cc',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'Mitchll',
+    url: 'https://betterclau.de/claude/api.mitchll.com',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'mazhichen等四位大佬',
+    url: 'https://betterclau.de/claude/api.hotaruapi.top',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'TechnologyStar',
+    url: 'https://betterclau.de/claude/aidrouter.qzz.io',
+    domain: 'betterclau.de',
+    enabled: true,
+  },
+  {
+    name: 'Simonzhu',
+    url: 'https://betterclau.de/claude/ai.zzhdsgsss.xyz',
+    domain: 'betterclau.de',
     enabled: true,
   },
 ]

@@ -168,6 +168,14 @@ jobs:
           $config.bundle | Add-Member -NotePropertyName "resources" -NotePropertyValue @{"binaries/anyfast-service-x86_64-pc-windows-msvc.exe" = "anyfast-service.exe"} -Force
           $config | ConvertTo-Json -Depth 10 | Set-Content tauri.conf.json
 
+      - name: Build macOS Helper (macOS only)
+        if: matrix.os == 'macos-latest'
+        working-directory: rust/src-tauri
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin anyfast-helper-macos
+          mkdir -p binaries
+          cp target/${{ matrix.target }}/release/anyfast-helper-macos binaries/anyfast-helper-macos-${{ matrix.target }}
+
       - name: Clean old bundles
         shell: bash
         run: rm -rf rust/src-tauri/target/${{ matrix.target }}/release/bundle
@@ -184,11 +192,13 @@ jobs:
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
 
-      - name: Upload macOS DMG
+      - name: Upload macOS DMG and Helper
         if: matrix.os == 'macos-latest'
         uses: softprops/action-gh-release@v2
         with:
-          files: rust/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          files: |
+            rust/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            rust/src-tauri/target/${{ matrix.target }}/release/anyfast-helper-macos
 
       - name: Upload Linux packages
         if: matrix.os == 'ubuntu-latest'

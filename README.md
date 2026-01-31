@@ -2,7 +2,7 @@
 
 > 中转站端点优选工具 - 自动测速、智能切换、hosts 绑定
 
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
 ![Rust](https://img.shields.io/badge/rust-1.75+-orange)
 ![Tauri](https://img.shields.io/badge/tauri-2.0-purple)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -81,7 +81,13 @@ v1.1.0 简化了设置界面，只保留必要选项：
 
 - Node.js >= 18
 - Rust >= 1.75
-- Windows 10/11
+- Windows 10/11 或 macOS 12+
+
+### macOS 权限设置
+
+macOS 版本首次启动时会弹出对话框，点击"安装 Helper"按钮，系统会弹出密码输入框。输入密码后 Helper 即安装完成，重启应用即可正常使用。
+
+整个过程只需要输入一次密码，之后永久无感使用。
 
 ### 开发模式
 

@@ -15,10 +15,15 @@ crate-type = ["lib", "cdylib", "staticlib"]
 name = "anyfast"
 path = "src/main.rs"
 
-# Service 可执行文件
+# Service 可执行文件 (Windows)
 [[bin]]
 name = "anyfast-service"
 path = "src/bin/anyfast-service.rs"
+
+# macOS Privilege Helper (setuid binary)
+[[bin]]
+name = "anyfast-helper-macos"
+path = "src/bin/anyfast-helper-macos.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -40,6 +45,9 @@ directories = "5"
 thiserror = "2"
 chrono = "0.4"
 fs2 = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
