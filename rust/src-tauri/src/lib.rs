@@ -45,6 +45,24 @@ pub struct AppState {
     auto_mode_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
+/// 从端点 URL 中提取目标域名
+/// URL 格式: https://betterclau.de/claude/{target_domain}
+/// 返回目标域名，如果无法解析则返回端点的 name 字段
+fn extract_target_domain(endpoint: &Endpoint) -> String {
+    // 尝试从 URL 路径中提取最后一段作为目标域名
+    // 移除末尾的斜杠，然后按 '/' 分割取最后一段
+    let url = endpoint.url.trim_end_matches('/');
+    if let Some(last_slash) = url.rfind('/') {
+        let last_segment = &url[last_slash + 1..];
+        // 验证看起来像域名（包含点号且不为空）
+        if !last_segment.is_empty() && last_segment.contains('.') {
+            return last_segment.to_string();
+        }
+    }
+    // 回退到端点名称
+    endpoint.name.clone()
+}
+
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
     state.config_manager.load().map_err(|e| e.to_string())
@@ -155,7 +173,7 @@ async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> 
         // 记录历史
         history_records.push(HistoryRecord {
             timestamp: now,
-            domain: r.endpoint.domain.clone(),
+            domain: extract_target_domain(&r.endpoint),
             original_latency: r.original_latency,
             optimized_latency: r.latency,
             speedup_percent: r.speedup_percent,
@@ -562,7 +580,7 @@ async fn start_workflow(
         // 记录历史
         history_records.push(HistoryRecord {
             timestamp: now,
-            domain: r.endpoint.domain.clone(),
+            domain: extract_target_domain(&r.endpoint),
             original_latency: r.original_latency,
             optimized_latency: r.latency,
             speedup_percent: r.speedup_percent,

@@ -1,6 +1,36 @@
 import { useState } from 'react'
-import { Play, Square, CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Activity } from 'lucide-react'
+import { Play, Square, CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Activity, Copy, Check } from 'lucide-react'
 import { Endpoint, EndpointResult, Progress, EndpointHealth } from '../types'
+
+// 可复制文本组件
+function CopyableText({ text, className }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch (err) {
+      console.error('复制失败:', err)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      className={`group flex items-center gap-1 cursor-pointer hover:text-apple-blue transition-colors ${className || ''}`}
+      title="点击复制"
+    >
+      <span className="truncate">{text}</span>
+      {copied ? (
+        <Check className="w-3 h-3 text-apple-green flex-shrink-0" />
+      ) : (
+        <Copy className="w-3 h-3 opacity-0 group-hover:opacity-50 flex-shrink-0 transition-opacity" />
+      )}
+    </button>
+  )
+}
 
 // WorkingIndicator 组件 Props 接口
 // Requirements: 5.1, 5.2, 5.3, 5.4
@@ -424,9 +454,10 @@ function ResultRow({
         <span className="text-xs lg:text-sm font-medium text-apple-gray-400 truncate">
           {endpoint.name}
         </span>
-        <span className="text-xs lg:text-sm text-apple-gray-300 font-mono truncate">
-          {endpoint.url}
-        </span>
+        <CopyableText
+          text={endpoint.url}
+          className="text-xs lg:text-sm text-apple-gray-300 font-mono"
+        />
         <span className="text-xs lg:text-sm text-apple-gray-300">-</span>
         <span className="text-xs lg:text-sm text-apple-gray-300">待测试</span>
         <span className="hidden sm:block text-xs lg:text-sm text-apple-gray-300">-</span>
@@ -494,9 +525,10 @@ function ResultRow({
       <span className="text-xs lg:text-sm font-medium text-apple-gray-600 truncate">
         {endpoint.name}
       </span>
-      <span className="text-xs lg:text-sm text-apple-gray-400 font-mono truncate">
-        {endpoint.url}
-      </span>
+      <CopyableText
+        text={endpoint.url}
+        className="text-xs lg:text-sm text-apple-gray-400 font-mono"
+      />
       <span className={`text-xs lg:text-sm font-mono truncate ${isLive ? 'text-apple-blue' : 'text-apple-gray-400'}`} title={isLive ? '实时最优 IP' : '测速结果 IP'}>
         {isLive && <span className="inline-block w-1.5 h-1.5 rounded-full bg-apple-green mr-1 animate-pulse" />}
         {displayIp}
