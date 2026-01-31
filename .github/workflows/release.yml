@@ -176,6 +176,14 @@ jobs:
           mkdir -p binaries
           cp target/${{ matrix.target }}/release/anyfast-helper-macos binaries/anyfast-helper-macos-${{ matrix.target }}
 
+      - name: Configure macOS externalBin (macOS only)
+        if: matrix.os == 'macos-latest'
+        working-directory: rust/src-tauri
+        run: |
+          # Add externalBin to tauri.conf.json for macOS builds
+          jq '.bundle.externalBin = ["binaries/anyfast-helper-macos"]' tauri.conf.json > tauri.conf.json.tmp
+          mv tauri.conf.json.tmp tauri.conf.json
+
       - name: Clean old bundles
         shell: bash
         run: rm -rf rust/src-tauri/target/${{ matrix.target }}/release/bundle

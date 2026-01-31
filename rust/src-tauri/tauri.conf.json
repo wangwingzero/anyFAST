@@ -40,9 +40,6 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "externalBin": [
-        "binaries/anyfast-helper-macos"
-      ]
     },
     "windows": {
       "certificateThumbprint": null,
