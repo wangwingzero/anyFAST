@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(config.test_count, 3);
         assert!(!config.autostart); // 默认关闭
         assert_eq!(config.endpoints.len(), 15); // 15个默认站点
-        // 第一个是公益站，默认启用
+                                                // 第一个是公益站，默认启用
         assert_eq!(config.endpoints[0].name, "WONG公益站");
         assert!(config.endpoints[0].enabled);
     }

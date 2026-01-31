@@ -73,7 +73,7 @@ pub fn get_bundled_helper_path() -> Option<std::path::PathBuf> {
 fn check_macos_helper_internal() -> Option<std::path::PathBuf> {
     // Only check the installed location - it must have setuid bit
     let install_path = std::path::PathBuf::from(MACOS_HELPER_INSTALL_PATH);
-    
+
     if install_path.exists() {
         // Check if it has setuid bit set
         use std::os::unix::fs::MetadataExt;
@@ -83,10 +83,7 @@ fn check_macos_helper_internal() -> Option<std::path::PathBuf> {
             if mode & 0o4000 != 0 {
                 return Some(install_path);
             } else {
-                eprintln!(
-                    "警告: helper 存在但未设置 setuid 位: {:?}",
-                    install_path
-                );
+                eprintln!("警告: helper 存在但未设置 setuid 位: {:?}", install_path);
             }
         }
     }
@@ -97,14 +94,14 @@ fn check_macos_helper_internal() -> Option<std::path::PathBuf> {
 #[cfg(target_os = "macos")]
 fn get_macos_helper_path() -> Option<std::path::PathBuf> {
     let lock = MACOS_HELPER_PATH.get_or_init(|| RwLock::new(check_macos_helper_internal()));
-    
+
     // Check if we need to refresh (after installation)
     if MACOS_HELPER_NEEDS_REFRESH.swap(false, Ordering::SeqCst) {
         if let Ok(mut guard) = lock.write() {
             *guard = check_macos_helper_internal();
         }
     }
-    
+
     lock.read().ok().and_then(|guard| guard.clone())
 }
 
@@ -313,10 +310,7 @@ pub fn clear_binding(domain: &str) -> Result<(), HostsError> {
     #[cfg(target_os = "macos")]
     {
         if let Some(helper_path) = get_macos_helper_path() {
-            match Command::new(&helper_path)
-                .args(["clear", domain])
-                .output()
-            {
+            match Command::new(&helper_path).args(["clear", domain]).output() {
                 Ok(output) => {
                     if output.status.success() {
                         return Ok(());
