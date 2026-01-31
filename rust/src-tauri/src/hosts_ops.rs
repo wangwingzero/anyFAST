@@ -113,6 +113,7 @@ pub fn refresh_macos_helper_status() -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 pub fn refresh_macos_helper_status() -> bool {
     false
 }
