@@ -503,26 +503,16 @@ function App() {
               // Windows 说明
               <div className="mb-4">
                 <p className="text-sm text-gray-600 mb-3">
-                  修改 hosts 文件需要管理员权限。您可以选择：
+                  修改 hosts 文件需要管理员权限。Service 未能连接，可能原因：
                 </p>
                 <ul className="text-sm text-gray-600 space-y-2 ml-4">
                   <li className="flex items-start gap-2">
-                    <span className="text-orange-500 mt-0.5">•</span>
-                    <span>以管理员身份重启（每次启动需要确认）</span>
+                    <span className="text-gray-400 mt-0.5">•</span>
+                    <span>Service 尚未启动（请稍等几秒后重试）</span>
                   </li>
                   <li className="flex items-start gap-2">
-                    <span className="text-green-500 mt-0.5">•</span>
-                    <span>
-                      安装 anyFAST Service（推荐，一次安装后续无感）
-                      <a 
-                        href="https://github.com/wangwingzero/anyFAST/releases" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-blue-500 hover:underline ml-1"
-                      >
-                        下载
-                      </a>
-                    </span>
+                    <span className="text-gray-400 mt-0.5">•</span>
+                    <span>旧版本升级（请重新安装最新版）</span>
                   </li>
                 </ul>
               </div>
@@ -565,12 +555,30 @@ function App() {
                   </a>
                 )
               ) : (
-                <button
-                  onClick={restartAsAdmin}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors"
-                >
-                  以管理员身份重启
-                </button>
+                <div className="flex gap-2 flex-1">
+                  <button
+                    onClick={async () => {
+                      await invoke('refresh_service_status')
+                      const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
+                      if (status.hasPermission) {
+                        setShowAdminDialog(false)
+                        setHasPermission(true)
+                        addLog('success', '已连接到 anyFAST Service')
+                      } else {
+                        addLog('warning', 'Service 仍未连接，请稍后重试')
+                      }
+                    }}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors"
+                  >
+                    重试连接
+                  </button>
+                  <button
+                    onClick={restartAsAdmin}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors"
+                  >
+                    管理员重启
+                  </button>
+                </div>
               )}
             </div>
           </div>
