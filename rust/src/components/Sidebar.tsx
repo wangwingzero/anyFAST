@@ -6,9 +6,10 @@ import { PermissionStatus } from '../types'
 interface SidebarProps {
   currentView: 'dashboard' | 'settings' | 'logs' | 'history'
   onNavigate: (view: 'dashboard' | 'settings' | 'logs' | 'history') => void
+  refreshTrigger?: number // 当这个值变化时，刷新权限状态
 }
 
-export function Sidebar({ currentView, onNavigate }: SidebarProps) {
+export function Sidebar({ currentView, onNavigate, refreshTrigger }: SidebarProps) {
   const [permissionStatus, setPermissionStatus] = useState<PermissionStatus | null>(null)
   const [isRestarting, setIsRestarting] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -30,7 +31,7 @@ export function Sidebar({ currentView, onNavigate }: SidebarProps) {
 
   useEffect(() => {
     refreshPermissionStatus()
-  }, [])
+  }, [refreshTrigger])
 
   const handleRestartAsAdmin = async () => {
     setIsRestarting(true)

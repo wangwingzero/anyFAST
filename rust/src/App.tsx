@@ -49,6 +49,8 @@ function App() {
   const [isInstallingHelper, setIsInstallingHelper] = useState(false)
   // 是否有内置 helper（macOS）
   const [hasBundledHelper, setHasBundledHelper] = useState(false)
+  // Sidebar 刷新触发器
+  const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastIdCounter
@@ -109,6 +111,8 @@ function App() {
         showToast('success', '安装成功')
         setShowAdminDialog(false)
         setHasPermission(true)
+        // 触发 Sidebar 刷新权限状态
+        setSidebarRefreshTrigger(prev => prev + 1)
         
         // 安装成功后，检查权限并继续工作流
         // 不需要重启，因为后端已经刷新了缓存
@@ -586,7 +590,7 @@ function App() {
       )}
 
       {/* Sidebar */}
-      <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+      <Sidebar currentView={currentView} onNavigate={setCurrentView} refreshTrigger={sidebarRefreshTrigger} />
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto min-w-0">
