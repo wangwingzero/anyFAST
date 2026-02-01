@@ -523,7 +523,7 @@ impl HostsManager {
         {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x08000000;
-            
+
             // Use absolute path to prevent PATH injection attacks
             // Use CREATE_NO_WINDOW to hide the console window flash
             std::process::Command::new(r"C:\Windows\System32\ipconfig.exe")
