@@ -228,11 +228,12 @@ describe('Dashboard', () => {
     expect(onApply).toHaveBeenCalledWith(mockResults[0])
   })
 
-  it('shows progress bar when running', () => {
+  it('shows loading state when running', () => {
     const progress: Progress = { current: 1, total: 2, message: '正在测试...' }
     render(<Dashboard {...defaultProps} isRunning={true} progress={progress} />)
 
-    expect(screen.getByText('正在测试...')).toBeInTheDocument()
+    // 当 isRunning=true 时，ToggleButton 显示 loading 状态
+    expect(screen.getByTestId('toggle-button-loading')).toBeInTheDocument()
   })
 
   it('shows speedup percentage for optimized results', () => {
