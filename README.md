@@ -122,3 +122,4 @@ MIT License
 **GitHub**: https://github.com/wangwingzero/anyFAST
 
 欢迎 Star ⭐ | 欢迎 PR | 欢迎提 Issue
+![1769925101830](image/README/1769925101830.png)

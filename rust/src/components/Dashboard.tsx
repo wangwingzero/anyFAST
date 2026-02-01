@@ -220,18 +220,77 @@ export function Dashboard({
         <p className="text-sm text-apple-gray-400 mt-1">测试中转站端点延迟</p>
       </div>
 
-      {/* Compact Status Bar */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <CompactStatus icon={<Globe className="w-4 h-4" />} label="已测" value={testedCount} color="blue" />
-        <CompactStatus icon={<CheckCircle2 className="w-4 h-4" />} label="可用" value={availableCount} color="green" />
-        <CompactStatus icon={<Link2 className="w-4 h-4" />} label="绑定" value={bindingCount} color="orange" />
+      {/* Compact Status Bar + Control */}
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <CompactStatus icon={<Globe className="w-4 h-4" />} label="已测" value={testedCount} color="blue" />
+          <CompactStatus icon={<CheckCircle2 className="w-4 h-4" />} label="可用" value={availableCount} color="green" />
+          <CompactStatus icon={<Link2 className="w-4 h-4" />} label="绑定" value={bindingCount} color="orange" />
+          
+          {/* Requirement 5.4: 在状态栏区域显示当前工作状态文字提示 */}
+          <WorkingIndicator isWorking={isWorking} bindingCount={bindingCount} />
+        </div>
         
-        {/* Requirement 5.4: 在状态栏区域显示当前工作状态文字提示 */}
-        <WorkingIndicator isWorking={isWorking} bindingCount={bindingCount} />
+        {/* Toggle Button inline */}
+        <ToggleButton
+          isWorking={isWorking}
+          isLoading={isRunning}
+          disabled={enabledCount === 0}
+          onClick={onToggleWorkflow}
+        />
       </div>
 
-      {/* Endpoints Management */}
-      <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-3 mb-3 shadow-sm border border-gray-100">
+      {/* Results Table - 测速结果放在上面，小窗口时优先显示 */}
+      <div className="flex-[3] bg-white/70 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[300px] mb-3">
+        <div className="px-3 lg:px-4 py-3 border-b border-apple-gray-200 flex items-center justify-between flex-shrink-0">
+          <h2 className="text-sm font-medium text-apple-gray-600">测速结果</h2>
+          <span className="text-xs text-apple-gray-400">
+            {availableCount}/{enabledCount} 可用
+          </span>
+        </div>
+
+        {/* Table Container with horizontal scroll */}
+        <div className="flex-1 overflow-auto min-h-0">
+          {/* Table Header */}
+          <div className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_60px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_80px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
+            <span>#</span>
+            <span>名称</span>
+            <span>域名</span>
+            <span>IP</span>
+            <span>延迟</span>
+            <span className="hidden sm:block">加速效果</span>
+            <span></span>
+          </div>
+
+        {/* Table Body */}
+        <div className="flex-1">
+          {enabledEndpoints.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-apple-gray-400">
+              <Zap className="w-12 h-12 mb-3 opacity-30" />
+              <p className="text-sm">请先添加端点</p>
+            </div>
+          ) : (
+            enabledEndpoints.map((endpoint, index) => {
+              const result = results.find(r => r.endpoint.domain === endpoint.domain)
+              const health = healthStatus?.find(h => h.domain === endpoint.domain)
+              return (
+                <ResultRow
+                  key={endpoint.domain}
+                  rank={index + 1}
+                  endpoint={endpoint}
+                  result={result}
+                  health={health}
+                  onApply={result ? () => onApply(result) : undefined}
+                />
+              )
+            })
+          )}
+        </div>
+        </div>
+      </div>
+
+      {/* Endpoints Management - 端点列表放在下面 */}
+      <div className="flex-1 bg-white/70 backdrop-blur-sm rounded-2xl p-3 shadow-sm border border-gray-100 overflow-auto max-h-[200px]">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-medium text-apple-gray-600">端点列表</h2>
           <div className="flex items-center gap-2">
@@ -314,81 +373,6 @@ export function Dashboard({
           {endpoints.length === 0 && (
             <p className="text-xs text-apple-gray-400">暂无端点，点击"添加"按钮添加</p>
           )}
-        </div>
-      </div>
-
-      {/* Control Panel */}
-      <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-3 mb-3 shadow-sm border border-gray-100">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="w-full sm:w-auto">
-            <p className="text-sm text-apple-gray-500">{progress.message}</p>
-            {isRunning && progress.total > 0 && (
-              <div className="mt-2 w-full sm:w-64 h-1.5 bg-apple-gray-200 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-apple-blue rounded-full transition-all duration-300"
-                  style={{ width: `${(progress.current / progress.total) * 100}%` }}
-                />
-              </div>
-            )}
-          </div>
-          <div className="flex gap-2 w-full sm:w-auto">
-            {/* Requirement 2.3: 单一的启动/停止切换按钮 */}
-            <ToggleButton
-              isWorking={isWorking}
-              isLoading={isRunning}
-              disabled={enabledCount === 0}
-              onClick={onToggleWorkflow}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Results Table */}
-      <div className="flex-1 bg-white/70 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-0">
-        <div className="px-3 lg:px-4 py-3 border-b border-apple-gray-200 flex items-center justify-between flex-shrink-0">
-          <h2 className="text-sm font-medium text-apple-gray-600">测速结果</h2>
-          <span className="text-xs text-apple-gray-400">
-            {availableCount}/{enabledCount} 可用
-          </span>
-        </div>
-
-        {/* Table Container with horizontal scroll */}
-        <div className="flex-1 overflow-auto min-h-0">
-          {/* Table Header */}
-          <div className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_60px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_80px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
-            <span>#</span>
-            <span>名称</span>
-            <span>域名</span>
-            <span>IP</span>
-            <span>延迟</span>
-            <span className="hidden sm:block">加速效果</span>
-            <span></span>
-          </div>
-
-        {/* Table Body */}
-        <div className="flex-1">
-          {enabledEndpoints.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-apple-gray-400">
-              <Zap className="w-12 h-12 mb-3 opacity-30" />
-              <p className="text-sm">请先添加端点</p>
-            </div>
-          ) : (
-            enabledEndpoints.map((endpoint, index) => {
-              const result = results.find(r => r.endpoint.domain === endpoint.domain)
-              const health = healthStatus?.find(h => h.domain === endpoint.domain)
-              return (
-                <ResultRow
-                  key={endpoint.domain}
-                  rank={index + 1}
-                  endpoint={endpoint}
-                  result={result}
-                  health={health}
-                  onApply={result ? () => onApply(result) : undefined}
-                />
-              )
-            })
-          )}
-        </div>
         </div>
       </div>
 
