@@ -167,7 +167,7 @@ export function Dashboard({
   results,
   isRunning,
   isWorking,
-  progress,
+  progress: _progress,
   bindingCount,
   healthStatus,
   onApply,
