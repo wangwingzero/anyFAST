@@ -715,8 +715,8 @@ async fn stop_workflow(state: State<'_, AppState>) -> Result<u32, String> {
     Ok(count as u32)
 }
 
-// 当前版本号（从 Cargo.toml 读取）
-const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+// 当前版本号（从 tauri.conf.json 读取，通过 build.rs 设置）
+const CURRENT_VERSION: &str = env!("APP_VERSION");
 
 // GitHub 仓库信息
 const GITHUB_REPO: &str = "wangwingzero/anyFAST";

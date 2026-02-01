@@ -1,6 +1,6 @@
 [package]
 name = "anyfast"
-version = "1.2.3"
+version = "1.2.6"
 description = "anyFAST - 中转站端点优选工具"
 authors = ["hudawang"]
 edition = "2021"
@@ -27,6 +27,7 @@ path = "src/bin/anyfast-helper-macos.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = "1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
