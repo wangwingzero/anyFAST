@@ -648,7 +648,6 @@ async fn start_workflow(
             speedup_percent: r.speedup_percent,
             applied: true,
         });
-
     }
 
     for (domain, (ip, _latency)) in &best_by_domain {

@@ -363,9 +363,8 @@ impl HealthChecker {
             };
             let in_cooldown = now - last_switch < SWITCH_COOLDOWN_SECS;
 
-            let should_switch_for_failure =
-                consecutive_failures >= failure_threshold
-                    && failure_window_count >= FAILURE_WINDOW_THRESHOLD;
+            let should_switch_for_failure = consecutive_failures >= failure_threshold
+                && failure_window_count >= FAILURE_WINDOW_THRESHOLD;
 
             let should_switch_for_degradation = severe_window_count >= SEVERE_WINDOW_THRESHOLD;
             let switch_triggered = should_switch_for_failure || should_switch_for_degradation;
