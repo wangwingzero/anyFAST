@@ -8,6 +8,16 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
+// Mock Tauri updater plugin
+vi.mock('@tauri-apps/plugin-updater', () => ({
+  check: vi.fn(),
+}))
+
+// Mock Tauri process plugin
+vi.mock('@tauri-apps/plugin-process', () => ({
+  relaunch: vi.fn(),
+}))
+
 describe('Settings', () => {
   const mockEndpoints: Endpoint[] = [
     { name: 'Test 1', url: 'https://test1.com/v1', domain: 'test1.com', enabled: true },
@@ -101,8 +111,9 @@ describe('Settings', () => {
     })
   })
 
-  it('calls check_for_update when check update button is clicked', async () => {
-    const { invoke } = await import('@tauri-apps/api/core')
+  it('calls updater check when check update button is clicked', async () => {
+    const { check } = await import('@tauri-apps/plugin-updater')
+    vi.mocked(check).mockResolvedValue(null)
 
     render(<Settings {...defaultProps} />)
 
@@ -110,7 +121,7 @@ describe('Settings', () => {
     fireEvent.click(checkButton)
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('check_for_update')
+      expect(check).toHaveBeenCalled()
     })
   })
 

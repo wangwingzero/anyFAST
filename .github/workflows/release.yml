@@ -203,6 +203,9 @@ jobs:
 
       - name: Build Tauri app
         working-directory: rust
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: npm run tauri build -- --target ${{ matrix.target }}
 
       - name: Upload Windows artifacts
@@ -212,6 +215,8 @@ jobs:
           files: |
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip
+            rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip.sig
 
       - name: Upload macOS DMG and Helper
         if: matrix.os == 'macos-latest'
@@ -234,25 +239,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-          
+
       - name: Generate latest.json for updater
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          
-          cat > latest.json << EOF
-          {
-            "version": "$VERSION",
-            "notes": "Release v$VERSION",
-            "pub_date": "$RELEASE_DATE",
-            "platforms": {
-              "windows-x86_64": {
-                "url": "https://github.com/${{ github.repository }}/releases/download/v$VERSION/anyFAST_${VERSION}_x64-setup.exe"
+
+          # Download signature files from the release artifacts
+          mkdir -p sigs
+          gh release download "v${VERSION}" \
+            --repo "${{ github.repository }}" \
+            --pattern "*.nsis.zip.sig" \
+            --dir sigs/ || true
+
+          # Read Windows NSIS signature
+          WIN_SIG=""
+          if ls sigs/*.nsis.zip.sig 1>/dev/null 2>&1; then
+            WIN_SIG=$(cat sigs/*.nsis.zip.sig)
+          fi
+
+          # Generate latest.json with proper updater format
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "Release v$VERSION" \
+            --arg pub_date "$RELEASE_DATE" \
+            --arg win_sig "$WIN_SIG" \
+            --arg win_url "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/anyFAST_${VERSION}_x64-setup.nsis.zip" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64": {
+                  signature: $win_sig,
+                  url: $win_url
+                }
               }
-            }
-          }
-          EOF
-          
+            }' > latest.json
+
       - name: Upload latest.json
         uses: softprops/action-gh-release@v2
         with:

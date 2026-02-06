@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle } from 'lucide-react'
-import { Endpoint, AppConfig, UpdateInfo } from '../types'
+import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2 } from 'lucide-react'
+import { Endpoint, AppConfig } from '../types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
+import { check, type Update } from '@tauri-apps/plugin-updater'
+import { relaunch } from '@tauri-apps/plugin-process'
 
 // 默认端点（与后端 models.rs 保持一致）
 const DEFAULT_ENDPOINTS: Endpoint[] = [
@@ -182,10 +184,16 @@ export function Settings({
   onConfigChange,
 }: SettingsProps) {
   // 更新检查状态
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const [currentVersion, setCurrentVersion] = useState<string>('')
+  const [updateChecked, setUpdateChecked] = useState(false)
+
+  // 更新下载状态
+  const [updatePhase, setUpdatePhase] = useState<'idle' | 'downloading' | 'installing' | 'restarting'>('idle')
+  const [downloadProgress, setDownloadProgress] = useState(0)
+  const [downloadTotal, setDownloadTotal] = useState(0)
+  const updateRef = useRef<Update | null>(null)
 
   // 自启动状态
   const [autostart, setAutostart] = useState(config?.autostart ?? false)
@@ -227,29 +235,76 @@ export function Settings({
     }
   }
 
-  // 检查更新
+  // 检查更新 - 使用 Tauri updater 插件
   const checkForUpdate = async () => {
     setCheckingUpdate(true)
     setUpdateError(null)
+    setUpdateChecked(false)
+    updateRef.current = null
     try {
-      const info = await invoke<UpdateInfo>('check_for_update')
-      setUpdateInfo(info)
+      const update = await check()
+      if (update) {
+        updateRef.current = update
+      }
+      setUpdateChecked(true)
     } catch (e) {
-      setUpdateError(e as string)
+      setUpdateError(String(e))
     } finally {
       setCheckingUpdate(false)
     }
   }
 
-  // 打开下载页面
-  const openReleasePage = async () => {
-    if (updateInfo?.releaseUrl) {
-      try {
-        await open(updateInfo.releaseUrl)
-      } catch (e) {
-        console.error('Failed to open release page:', e)
-      }
+  // 执行应用内更新：下载 + 安装 + 重启
+  const performUpdate = async () => {
+    if (!updateRef.current) return
+
+    setUpdatePhase('downloading')
+    setDownloadProgress(0)
+    setDownloadTotal(0)
+    setUpdateError(null)
+
+    try {
+      let downloaded = 0
+
+      await updateRef.current.downloadAndInstall((event) => {
+        switch (event.event) {
+          case 'Started':
+            setDownloadTotal(event.data.contentLength ?? 0)
+            break
+          case 'Progress':
+            downloaded += event.data.chunkLength
+            setDownloadProgress(downloaded)
+            break
+          case 'Finished':
+            setUpdatePhase('installing')
+            break
+        }
+      })
+
+      setUpdatePhase('restarting')
+      await relaunch()
+    } catch (e) {
+      setUpdateError(String(e))
+      setUpdatePhase('idle')
     }
+  }
+
+  // 打开 GitHub Releases 页面（备用）
+  const openReleasePage = async () => {
+    try {
+      await open('https://github.com/wangwingzero/anyFAST/releases/latest')
+    } catch (e) {
+      console.error('Failed to open release page:', e)
+    }
+  }
+
+  // 格式化文件大小
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
   }
 
   const restoreAllDefaults = async () => {
@@ -339,7 +394,7 @@ export function Settings({
               </div>
               <button
                 onClick={checkForUpdate}
-                disabled={checkingUpdate}
+                disabled={checkingUpdate || updatePhase !== 'idle'}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-blue text-white text-sm font-medium rounded-xl hover:bg-apple-blue/90 transition-colors flex-shrink-0 disabled:opacity-50"
               >
                 <RefreshCw className={`w-4 h-4 ${checkingUpdate ? 'animate-spin' : ''}`} />
@@ -347,48 +402,115 @@ export function Settings({
               </button>
             </div>
 
-            {/* 更新结果 */}
+            {/* 更新错误 */}
             {updateError && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-xl">
-                <p className="text-sm text-red-600">检查更新失败: {updateError}</p>
+                <p className="text-sm text-red-600 mb-2">更新失败: {updateError}</p>
+                <button
+                  onClick={openReleasePage}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-red-600 hover:text-red-700 hover:underline transition-colors"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  前往 GitHub 手动下载
+                </button>
               </div>
             )}
 
-            {updateInfo && !updateError && (
-              <div className={`p-3 rounded-xl ${updateInfo.hasUpdate ? 'bg-apple-green/10 border border-apple-green/30' : 'bg-apple-gray-50'}`}>
-                {updateInfo.hasUpdate ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Download className="w-4 h-4 text-apple-green" />
-                      <span className="text-sm font-medium text-apple-green">发现新版本!</span>
-                    </div>
-                    <p className="text-sm text-apple-gray-600">
-                      最新版本: <span className="font-medium">v{updateInfo.latestVersion}</span>
-                      {updateInfo.publishedAt && (
-                        <span className="text-apple-gray-400 ml-2">
-                          ({new Date(updateInfo.publishedAt).toLocaleDateString('zh-CN')})
-                        </span>
-                      )}
-                    </p>
-                    {updateInfo.releaseNotes && (
-                      <p className="text-xs text-apple-gray-400 line-clamp-2">{updateInfo.releaseNotes}</p>
+            {/* 有更新可用 */}
+            {updateChecked && updateRef.current && !updateError && (
+              <div className="p-3 rounded-xl bg-apple-green/10 border border-apple-green/30">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Download className="w-4 h-4 text-apple-green" />
+                    <span className="text-sm font-medium text-apple-green">发现新版本!</span>
+                  </div>
+                  <p className="text-sm text-apple-gray-600">
+                    最新版本: <span className="font-medium">v{updateRef.current.version}</span>
+                    {updateRef.current.date && (
+                      <span className="text-apple-gray-400 ml-2">
+                        ({new Date(updateRef.current.date).toLocaleDateString('zh-CN')})
+                      </span>
                     )}
-                    
+                  </p>
+                  {updateRef.current.body && (
+                    <p className="text-xs text-apple-gray-400 line-clamp-3 whitespace-pre-line">{updateRef.current.body}</p>
+                  )}
+
+                  {/* 下载进度 */}
+                  {updatePhase !== 'idle' && (
+                    <div className="mt-2 space-y-1.5">
+                      {/* 进度条 */}
+                      <div className="w-full bg-apple-gray-200 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="h-full bg-apple-green rounded-full transition-all duration-300 ease-out"
+                          style={{
+                            width: updatePhase === 'downloading' && downloadTotal > 0
+                              ? `${Math.min((downloadProgress / downloadTotal) * 100, 100)}%`
+                              : updatePhase === 'installing' || updatePhase === 'restarting'
+                              ? '100%'
+                              : '0%'
+                          }}
+                        />
+                      </div>
+                      {/* 状态文字 */}
+                      <div className="flex items-center justify-between text-xs text-apple-gray-400">
+                        <div className="flex items-center gap-1.5">
+                          {updatePhase === 'downloading' && (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <span>正在下载...</span>
+                            </>
+                          )}
+                          {updatePhase === 'installing' && (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <span>正在安装...</span>
+                            </>
+                          )}
+                          {updatePhase === 'restarting' && (
+                            <>
+                              <CheckCircle2 className="w-3 h-3 text-apple-green" />
+                              <span className="text-apple-green">更新完成，正在重启...</span>
+                            </>
+                          )}
+                        </div>
+                        {updatePhase === 'downloading' && downloadTotal > 0 && (
+                          <span>{formatBytes(downloadProgress)} / {formatBytes(downloadTotal)}</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 操作按钮 */}
+                  {updatePhase === 'idle' && (
                     <div className="flex gap-2 mt-2">
                       <button
-                        onClick={openReleasePage}
+                        onClick={performUpdate}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-green text-white text-sm font-medium rounded-xl hover:bg-apple-green/90 transition-colors"
                       >
                         <Download className="w-4 h-4" />
-                        前往下载
+                        立即更新
+                      </button>
+                      <button
+                        onClick={openReleasePage}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-apple-gray-400 text-xs hover:text-apple-gray-500 transition-colors"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        手动下载
                       </button>
                     </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-apple-gray-600">✓ 已是最新版本</span>
-                  </div>
-                )}
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 已是最新版本 */}
+            {updateChecked && !updateRef.current && !updateError && (
+              <div className="p-3 rounded-xl bg-apple-gray-50">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-apple-green" />
+                  <span className="text-sm text-apple-gray-600">已是最新版本</span>
+                </div>
               </div>
             )}
           </div>

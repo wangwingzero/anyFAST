@@ -48,6 +48,22 @@ vi.mock('@tauri-apps/api/event', () => ({
   once: vi.fn().mockImplementation(() => Promise.resolve(() => {})),
 }))
 
+// Mock Tauri shell plugin
+vi.mock('@tauri-apps/plugin-shell', () => ({
+  open: vi.fn().mockResolvedValue(undefined),
+}))
+
+// Mock Tauri updater plugin
+vi.mock('@tauri-apps/plugin-updater', () => ({
+  check: vi.fn().mockResolvedValue(null),
+}))
+
+// Mock Tauri process plugin
+vi.mock('@tauri-apps/plugin-process', () => ({
+  relaunch: vi.fn().mockResolvedValue(undefined),
+  exit: vi.fn().mockResolvedValue(undefined),
+}))
+
 // Mock window.__TAURI_INTERNALS__ for any direct usage
 Object.defineProperty(window, '__TAURI_INTERNALS__', {
   value: {
