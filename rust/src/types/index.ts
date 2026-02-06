@@ -24,6 +24,7 @@ export interface WorkflowResult {
   testCount: number           // 测试的端点数
   successCount: number        // 成功的端点数
   appliedCount: number        // 应用的绑定数
+  keptCount: number           // 因当前绑定仍可用而保持不变的域名数
   results: EndpointResult[]   // 详细测试结果
 }
 

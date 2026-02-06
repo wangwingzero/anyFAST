@@ -675,7 +675,8 @@ async fn start_workflow(
         *state_results = results.clone();
     }
 
-    // Step 3: 应用所有成功的端点到 hosts 文件 (Requirement 3.2)
+    // Step 3: 智能应用 - 稳定性优先策略 (Requirement 3.2)
+    // 如果当前绑定的 IP 仍然可用，保持不变，避免不必要的 DNS 刷新中断连接
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -684,6 +685,7 @@ async fn start_workflow(
     let mut bindings: Vec<HostsBinding> = Vec::with_capacity(best_by_domain.len());
     let mut history_records: Vec<HistoryRecord> = Vec::new();
     let mut success_count = 0u32;
+    let mut kept_count = 0u32; // 因当前绑定可用而保持不变的域名数
 
     for r in results.iter().filter(|r| r.success) {
         success_count += 1;
@@ -700,11 +702,53 @@ async fn start_workflow(
     }
 
     for (domain, (ip, _latency)) in &best_by_domain {
-        bindings.push(HostsBinding {
-            domain: domain.clone(),
-            ip: ip.clone(),
-        });
+        let current_binding = hosts_ops::read_binding(domain);
+
+        match current_binding {
+            Some(ref current_ip) if current_ip != ip => {
+                // 当前绑定 IP 与新最优 IP 不同，验证当前 IP 是否仍可用
+                if let Some(endpoint) = endpoints.iter().find(|e| e.domain == *domain) {
+                    let validation = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        tester.test_ip(endpoint, current_ip.clone()),
+                    )
+                    .await;
+
+                    match validation {
+                        Ok(result) if result.success => {
+                            // 当前 IP 仍然可用，保持稳定不替换
+                            kept_count += 1;
+                            continue;
+                        }
+                        _ => {
+                            // 当前 IP 已失效或测试超时，替换为新最优 IP
+                            bindings.push(HostsBinding {
+                                domain: domain.clone(),
+                                ip: ip.clone(),
+                            });
+                        }
+                    }
+                } else {
+                    // 找不到对应端点配置，直接替换
+                    bindings.push(HostsBinding {
+                        domain: domain.clone(),
+                        ip: ip.clone(),
+                    });
+                }
+            }
+            Some(_) => {
+                // IP 相同，无需更新
+            }
+            None => {
+                // 无绑定，应用新 IP
+                bindings.push(HostsBinding {
+                    domain: domain.clone(),
+                    ip: ip.clone(),
+                });
+            }
+        }
     }
+    // 最终安全过滤：移除与 hosts 文件完全相同的绑定
     bindings = filter_changed_bindings(bindings);
 
     // 保存历史记录
@@ -769,6 +813,7 @@ async fn start_workflow(
         test_count,
         success_count,
         applied_count,
+        kept_count,
         results,
     })
 }

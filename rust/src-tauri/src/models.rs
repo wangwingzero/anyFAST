@@ -140,6 +140,8 @@ pub struct WorkflowResult {
     pub test_count: u32,
     pub success_count: u32,
     pub applied_count: u32,
+    /// 因当前绑定仍可用而保持不变的域名数（稳定性优先策略）
+    pub kept_count: u32,
     pub results: Vec<EndpointResult>,
 }
 

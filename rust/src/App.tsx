@@ -302,12 +302,13 @@ function App() {
       setResults(result.results)
       await refreshBindingCount()
       
+      const keptMsg = result.keptCount > 0 ? `，保持 ${result.keptCount} 个稳定绑定` : ''
       setProgress({ 
         current: result.testCount, 
         total: result.testCount, 
-        message: `已应用 ${result.appliedCount} 个绑定` 
+        message: `已应用 ${result.appliedCount} 个绑定${keptMsg}` 
       })
-      addLog('success', `工作流已自动启动: 测试 ${result.testCount} 个端点，成功 ${result.successCount} 个，应用 ${result.appliedCount} 个绑定`)
+      addLog('success', `工作流已自动启动: 测试 ${result.testCount} 个端点，成功 ${result.successCount} 个，应用 ${result.appliedCount} 个绑定${keptMsg}`)
     } catch (e) {
       console.error('Auto start workflow failed:', e)
       addLog('warning', `自动启动失败: ${e}`)
@@ -360,13 +361,14 @@ function App() {
         setResults(result.results)
         await refreshBindingCount()
         
+        const keptMsg = result.keptCount > 0 ? `，保持 ${result.keptCount} 个稳定绑定` : ''
         setProgress({ 
           current: result.testCount, 
           total: result.testCount, 
-          message: `已应用 ${result.appliedCount} 个绑定` 
+          message: `已应用 ${result.appliedCount} 个绑定${keptMsg}` 
         })
-        addLog('success', `工作流已启动: 测试 ${result.testCount} 个端点，成功 ${result.successCount} 个，应用 ${result.appliedCount} 个绑定`)
-        showToast('success', `已启动，应用了 ${result.appliedCount} 个绑定`)
+        addLog('success', `工作流已启动: 测试 ${result.testCount} 个端点，成功 ${result.successCount} 个，应用 ${result.appliedCount} 个绑定${keptMsg}`)
+        showToast('success', `已启动，应用 ${result.appliedCount} 个${keptMsg}`)
       } catch (e) {
         console.error('Start workflow failed:', e)
         if (handlePermissionError(e)) {
