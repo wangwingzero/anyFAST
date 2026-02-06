@@ -132,6 +132,10 @@ use tokio::sync::Mutex;
 
 impl EndpointTester {
     pub fn new(custom_cf_ips: Vec<String>) -> Self {
+        // Install ring as the default CryptoProvider (safe to call multiple times;
+        // needed when both ring and aws-lc-rs features are enabled via deps)
+        let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+
         // Pre-create TLS configuration (reused across all connections)
         let mut root_store = RootCertStore::empty();
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
