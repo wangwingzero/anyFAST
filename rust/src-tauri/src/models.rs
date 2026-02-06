@@ -542,12 +542,14 @@ mod tests {
             test_count: 2,
             success_count: 1,
             applied_count: 1,
+            kept_count: 0,
             results: vec![endpoint_result],
         };
 
         assert_eq!(workflow_result.test_count, 2);
         assert_eq!(workflow_result.success_count, 1);
         assert_eq!(workflow_result.applied_count, 1);
+        assert_eq!(workflow_result.kept_count, 0);
         assert_eq!(workflow_result.results.len(), 1);
     }
 
@@ -565,6 +567,7 @@ mod tests {
             test_count: 2,
             success_count: 1,
             applied_count: 1,
+            kept_count: 0,
             results: vec![endpoint_result],
         };
 
@@ -573,6 +576,7 @@ mod tests {
         assert!(json.contains("testCount"));
         assert!(json.contains("successCount"));
         assert!(json.contains("appliedCount"));
+        assert!(json.contains("keptCount"));
 
         let parsed: WorkflowResult = serde_json::from_str(&json).unwrap();
         assert_eq!(workflow_result.test_count, parsed.test_count);
