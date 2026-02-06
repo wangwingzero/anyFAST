@@ -50,6 +50,17 @@ const MIN_CHECK_INTERVAL_SECS: u64 = 60;
 const MIN_SLOW_THRESHOLD_PERCENT: u32 = 100;
 const MIN_FAILURE_THRESHOLD: u32 = 3;
 
+struct CheckContext {
+    baselines: Arc<Mutex<HashMap<String, f64>>>,
+    failure_counts: Arc<Mutex<HashMap<String, u32>>>,
+    failure_windows: Arc<Mutex<HashMap<String, VecDeque<bool>>>>,
+    severe_windows: Arc<Mutex<HashMap<String, VecDeque<bool>>>>,
+    last_switch_times: Arc<Mutex<HashMap<String, i64>>>,
+    pending_switch_since: Arc<Mutex<HashMap<String, i64>>>,
+    slow_threshold: u32,
+    failure_threshold: u32,
+}
+
 fn current_timestamp() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -192,6 +203,16 @@ impl HealthChecker {
                 Arc::new(Mutex::new(HashMap::new()));
             let pending_switch_since: Arc<Mutex<HashMap<String, i64>>> =
                 Arc::new(Mutex::new(HashMap::new()));
+            let check_context = CheckContext {
+                baselines: baselines.clone(),
+                failure_counts: failure_counts.clone(),
+                failure_windows: failure_windows.clone(),
+                severe_windows: severe_windows.clone(),
+                last_switch_times: last_switch_times.clone(),
+                pending_switch_since: pending_switch_since.clone(),
+                slow_threshold,
+                failure_threshold,
+            };
 
             // 主循环
             loop {
@@ -202,17 +223,7 @@ impl HealthChecker {
                     }
                     _ = sleep(Duration::from_secs(check_interval)) => {
                         // 执行健康检查
-                        let check_result = Self::perform_check(
-                            &endpoints,
-                            &baselines,
-                            &failure_counts,
-                            &failure_windows,
-                            &severe_windows,
-                            &last_switch_times,
-                            &pending_switch_since,
-                            slow_threshold,
-                            failure_threshold,
-                        ).await;
+                        let check_result = Self::perform_check(&endpoints, &check_context).await;
 
                         // 更新状态
                         {
@@ -261,17 +272,7 @@ impl HealthChecker {
     }
 
     /// 执行健康检查
-    async fn perform_check(
-        endpoints: &[Endpoint],
-        baselines: &Arc<Mutex<HashMap<String, f64>>>,
-        failure_counts: &Arc<Mutex<HashMap<String, u32>>>,
-        failure_windows: &Arc<Mutex<HashMap<String, VecDeque<bool>>>>,
-        severe_windows: &Arc<Mutex<HashMap<String, VecDeque<bool>>>>,
-        last_switch_times: &Arc<Mutex<HashMap<String, i64>>>,
-        pending_switch_since: &Arc<Mutex<HashMap<String, i64>>>,
-        slow_threshold: u32,
-        failure_threshold: u32,
-    ) -> CheckResult {
+    async fn perform_check(endpoints: &[Endpoint], check_context: &CheckContext) -> CheckResult {
         let tester = EndpointTester::new(vec![]);
         let mut endpoints_health = Vec::new();
         let mut needs_switch = Vec::new();
@@ -298,7 +299,7 @@ impl HealthChecker {
 
             // 获取基准延迟
             let baseline = {
-                let b = baselines.lock().await;
+                let b = check_context.baselines.lock().await;
                 b.get(&endpoint.domain)
                     .copied()
                     .unwrap_or(if current_latency > 0.0 {
@@ -318,12 +319,12 @@ impl HealthChecker {
             };
             let severe_degraded = !is_failure
                 && baseline > 0.0
-                && slow_ratio >= slow_threshold as f64
+                && slow_ratio >= check_context.slow_threshold as f64
                 && (current_latency - baseline) >= SEVERE_ABS_THRESHOLD_MS;
 
             // 更新失败计数
             let consecutive_failures = {
-                let mut counts = failure_counts.lock().await;
+                let mut counts = check_context.failure_counts.lock().await;
                 let count = counts.entry(endpoint.domain.clone()).or_insert(0);
                 if is_failure {
                     *count += 1;
@@ -334,7 +335,7 @@ impl HealthChecker {
             };
 
             let failure_window_count = {
-                let mut windows = failure_windows.lock().await;
+                let mut windows = check_context.failure_windows.lock().await;
                 let window = windows
                     .entry(endpoint.domain.clone())
                     .or_insert_with(VecDeque::new);
@@ -346,7 +347,7 @@ impl HealthChecker {
             };
 
             let severe_window_count = {
-                let mut windows = severe_windows.lock().await;
+                let mut windows = check_context.severe_windows.lock().await;
                 let window = windows
                     .entry(endpoint.domain.clone())
                     .or_insert_with(VecDeque::new);
@@ -358,18 +359,18 @@ impl HealthChecker {
             };
 
             let last_switch = {
-                let times = last_switch_times.lock().await;
+                let times = check_context.last_switch_times.lock().await;
                 times.get(&endpoint.domain).copied().unwrap_or(0)
             };
             let in_cooldown = now - last_switch < SWITCH_COOLDOWN_SECS;
 
-            let should_switch_for_failure = consecutive_failures >= failure_threshold
+            let should_switch_for_failure = consecutive_failures >= check_context.failure_threshold
                 && failure_window_count >= FAILURE_WINDOW_THRESHOLD;
 
             let should_switch_for_degradation = severe_window_count >= SEVERE_WINDOW_THRESHOLD;
             let switch_triggered = should_switch_for_failure || should_switch_for_degradation;
             let should_switch_now = {
-                let mut pending = pending_switch_since.lock().await;
+                let mut pending = check_context.pending_switch_since.lock().await;
                 Self::should_switch_after_silent_window(
                     &endpoint.domain,
                     now,
@@ -544,9 +545,11 @@ mod tests {
 
     #[test]
     fn defensive_thresholds_are_not_too_aggressive() {
-        assert!(MIN_CHECK_INTERVAL_SECS >= 60);
-        assert!(MIN_SLOW_THRESHOLD_PERCENT >= 100);
-        assert!(MIN_FAILURE_THRESHOLD >= 3);
+        const {
+            assert!(MIN_CHECK_INTERVAL_SECS >= 60);
+            assert!(MIN_SLOW_THRESHOLD_PERCENT >= 100);
+            assert!(MIN_FAILURE_THRESHOLD >= 3);
+        }
     }
 
     #[test]
