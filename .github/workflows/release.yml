@@ -1,3 +1,20 @@
+# ============================================================
+# Release Workflow
+# ============================================================
+#
+# 重要经验：设置 TAURI_SIGNING_PRIVATE_KEY 等 Secrets 时，
+# 必须使用 gh CLI 命令行设置，不要用 GitHub Web UI 粘贴！
+#
+# Web UI 会破坏 base64 密钥内容（截断、加换行），导致签名时报错：
+#   - "Wrong password for that key"
+#   - "Missing comment in secret key"
+#   - "failed to fill whole buffer"
+#
+# 正确做法（在本地终端执行）：
+#   Get-Content ".tauri/anyfast.key" -Raw | gh secret set TAURI_SIGNING_PRIVATE_KEY --repo owner/repo
+#   echo "your-password" | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo owner/repo
+# ============================================================
+
 name: Release
 
 on:
