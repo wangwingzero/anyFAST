@@ -156,9 +156,11 @@ interface DashboardProps {
   progress: Progress
   bindingCount: number
   healthStatus?: EndpointHealth[]
+  testingDomains: Set<string>  // 正在单独测速的域名集合
   onApply: (result: EndpointResult) => void
   onToggleWorkflow: () => void  // 切换工作流
   onRetest: () => void
+  onTestSingle: (endpoint: Endpoint) => void  // 单独测速
   onEndpointsChange?: (endpoints: Endpoint[]) => void
   onSaveConfig?: (endpoints: Endpoint[]) => void
 }
@@ -171,9 +173,11 @@ export function Dashboard({
   progress: _progress,
   bindingCount,
   healthStatus,
+  testingDomains,
   onApply,
   onToggleWorkflow,
   onRetest,
+  onTestSingle,
   onEndpointsChange,
   onSaveConfig,
 }: DashboardProps) {
@@ -270,14 +274,14 @@ export function Dashboard({
         {/* Table Container with horizontal scroll */}
         <div className="flex-1 overflow-auto min-h-0">
           {/* Table Header */}
-          <div className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_60px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_80px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
+          <div className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_90px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_120px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
             <span>#</span>
             <span>名称</span>
             <span>域名</span>
             <span>IP</span>
             <span>延迟</span>
             <span className="hidden sm:block">加速效果</span>
-            <span></span>
+            <span>操作</span>
           </div>
 
         {/* Table Body */}
@@ -291,6 +295,7 @@ export function Dashboard({
             enabledEndpoints.map((endpoint, index) => {
               const result = results.find(r => r.endpoint.domain === endpoint.domain)
               const health = healthStatus?.find(h => h.domain === endpoint.domain)
+              const isTesting = testingDomains.has(endpoint.domain)
               return (
                 <ResultRow
                   key={endpoint.domain}
@@ -298,7 +303,9 @@ export function Dashboard({
                   endpoint={endpoint}
                   result={result}
                   health={health}
+                  isTesting={isTesting}
                   onApply={result ? () => onApply(result) : undefined}
+                  onTestSingle={() => onTestSingle(endpoint)}
                 />
               )
             })
@@ -433,13 +440,17 @@ function ResultRow({
   endpoint,
   result,
   health,
+  isTesting,
   onApply,
+  onTestSingle,
 }: {
   rank: number
   endpoint: Endpoint
   result?: EndpointResult
   health?: EndpointHealth
+  isTesting?: boolean
   onApply?: () => void
+  onTestSingle?: () => void
 }) {
   // 优先使用健康检查的最优 IP，否则使用测速结果
   const displayIp = health?.best_ip || result?.ip || '-'
@@ -450,7 +461,7 @@ function ResultRow({
   if (!result && !health) {
     return (
       <div
-        className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_60px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_80px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 bg-apple-gray-50/50"
+        className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_90px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_120px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 bg-apple-gray-50/50"
       >
         <span className="text-xs lg:text-sm text-apple-gray-300">{rank}</span>
         <span className="text-xs lg:text-sm font-medium text-apple-gray-400 truncate">
@@ -461,9 +472,25 @@ function ResultRow({
           className="text-xs lg:text-sm text-apple-gray-300 font-mono"
         />
         <span className="text-xs lg:text-sm text-apple-gray-300">-</span>
-        <span className="text-xs lg:text-sm text-apple-gray-300">待测试</span>
+        <span className="text-xs lg:text-sm text-apple-gray-300">{isTesting ? '测速中...' : '待测试'}</span>
         <span className="hidden sm:block text-xs lg:text-sm text-apple-gray-300">-</span>
-        <span></span>
+        <div>
+          {onTestSingle && (
+            <button
+              onClick={onTestSingle}
+              disabled={isTesting}
+              className="px-2 lg:px-3 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-blue/10 text-apple-blue hover:bg-apple-blue/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              title="单独测速"
+            >
+              {isTesting ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3 h-3" />
+              )}
+              <span className="hidden lg:inline">测速</span>
+            </button>
+          )}
+        </div>
       </div>
     )
   }
@@ -521,7 +548,7 @@ function ResultRow({
 
   return (
     <div
-      className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_60px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_80px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors"
+      className={`grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_90px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_120px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors ${isTesting ? 'bg-apple-blue/5' : ''}`}
     >
       <span className="text-xs lg:text-sm text-apple-gray-400">{rank}</span>
       <span className="text-xs lg:text-sm font-medium text-apple-gray-600 truncate">
@@ -533,16 +560,30 @@ function ResultRow({
       />
       <span className={`text-xs lg:text-sm font-mono truncate ${isLive ? 'text-apple-blue' : 'text-apple-gray-400'}`} title={isLive ? '实时最优 IP' : '测速结果 IP'}>
         {isLive && <span className="inline-block w-1.5 h-1.5 rounded-full bg-apple-green mr-1 animate-pulse" />}
-        {displayIp}
+        {isTesting ? <span className="text-apple-gray-400">测速中...</span> : displayIp}
       </span>
-      <span className={`text-xs lg:text-sm font-medium ${latencyColor}`}>
-        {latency > 0 ? `${latency.toFixed(0)}ms` : (result?.error || '失败')}
+      <span className={`text-xs lg:text-sm font-medium ${isTesting ? 'text-apple-gray-400' : latencyColor}`}>
+        {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-apple-blue" /> : (latency > 0 ? `${latency.toFixed(0)}ms` : (result?.error || '失败'))}
       </span>
       <div className="hidden sm:block">
-        {renderSpeedupBadge()}
+        {isTesting ? <span className="text-apple-gray-300 text-xs">-</span> : renderSpeedupBadge()}
       </div>
-      <div>
-        {result?.success && !result.use_original && onApply && (
+      <div className="flex items-center gap-1">
+        {onTestSingle && (
+          <button
+            onClick={onTestSingle}
+            disabled={isTesting}
+            className="px-1.5 lg:px-2 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-gray-100 text-apple-gray-500 hover:bg-apple-blue/10 hover:text-apple-blue disabled:opacity-50 disabled:cursor-not-allowed"
+            title="单独测速"
+          >
+            {isTesting ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3 h-3" />
+            )}
+          </button>
+        )}
+        {result?.success && !result.use_original && onApply && !isTesting && (
           <button
             onClick={onApply}
             className="px-2 lg:px-3 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-blue text-white hover:bg-apple-blue-hover"

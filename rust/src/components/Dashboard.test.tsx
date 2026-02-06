@@ -130,9 +130,11 @@ describe('Dashboard', () => {
     isWorking: false,
     progress: mockProgress,
     bindingCount: 0,
+    testingDomains: new Set<string>(),
     onApply: vi.fn(),
     onToggleWorkflow: vi.fn(),
     onRetest: vi.fn(),
+    onTestSingle: vi.fn(),
   }
 
   beforeEach(() => {

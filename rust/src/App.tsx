@@ -53,6 +53,8 @@ function App() {
   const [hasBundledHelper, setHasBundledHelper] = useState(false)
   // Sidebar 刷新触发器
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
+  // 正在单独测速的域名集合
+  const [testingDomains, setTestingDomains] = useState<Set<string>>(new Set())
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastIdCounter
@@ -464,6 +466,49 @@ function App() {
     }
   }
 
+  // 单独测速某个端点
+  const testSingleEndpoint = async (endpoint: Endpoint) => {
+    const domain = endpoint.domain
+    
+    // 标记该域名为测试中
+    setTestingDomains(prev => new Set(prev).add(domain))
+    addLog('info', `正在单独测速: ${endpoint.name} (${domain})`)
+
+    try {
+      const result = await invoke<EndpointResult>('test_single_endpoint', { endpoint })
+      
+      // 更新结果列表
+      setResults(prev => {
+        const existing = prev.findIndex(r => r.endpoint.domain === domain)
+        if (existing >= 0) {
+          const updated = [...prev]
+          updated[existing] = result
+          return updated
+        }
+        return [...prev, result]
+      })
+
+      if (result.success) {
+        addLog('success', `单独测速完成: ${endpoint.name} → ${result.ip} (${result.latency.toFixed(0)}ms)`)
+        showToast('success', `${endpoint.name} 测速完成: ${result.latency.toFixed(0)}ms`)
+      } else {
+        addLog('warning', `单独测速失败: ${endpoint.name} - ${result.error || '未知错误'}`)
+        showToast('warning', `${endpoint.name} 测速失败`)
+      }
+    } catch (e) {
+      console.error('Single endpoint test failed:', e)
+      addLog('error', `单独测速出错: ${endpoint.name} - ${e}`)
+      showToast('error', `${endpoint.name} 测速出错: ${e}`)
+    } finally {
+      // 移除测试中标记
+      setTestingDomains(prev => {
+        const next = new Set(prev)
+        next.delete(domain)
+        return next
+      })
+    }
+  }
+
   // [已移除] applyAll - 由 toggleWorkflow 中的 start_workflow 替代
   // const applyAll = async () => {
   //   try {
@@ -684,9 +729,11 @@ function App() {
             progress={progress}
             bindingCount={bindingCount}
             healthStatus={healthStatus}
+            testingDomains={testingDomains}
             onApply={applyEndpoint}
             onToggleWorkflow={toggleWorkflow}
             onRetest={retestEndpoints}
+            onTestSingle={testSingleEndpoint}
             onEndpointsChange={setEndpoints}
             onSaveConfig={saveConfigWithEndpoints}
           />

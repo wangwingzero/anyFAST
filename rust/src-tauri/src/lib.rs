@@ -553,6 +553,55 @@ async fn is_auto_mode_running(state: State<'_, AppState>) -> Result<bool, String
     Ok(token.is_some())
 }
 
+// ===== 单端点测速命令 =====
+
+/// 单独测试一个端点，返回测速结果并更新状态
+#[tauri::command]
+async fn test_single_endpoint(
+    state: State<'_, AppState>,
+    endpoint: Endpoint,
+) -> Result<EndpointResult, String> {
+    let tester = EndpointTester::new(vec![]);
+
+    // 使用 30 秒超时防止永久卡住
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tester.test_endpoint(&endpoint),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            return Err("单端点测速超时（30秒），请检查网络连接".into());
+        }
+    };
+
+    // 更新全局结果列表中该端点的结果
+    {
+        let mut state_results = state.results.lock().await;
+        if let Some(existing) = state_results
+            .iter_mut()
+            .find(|r| r.endpoint.domain == endpoint.domain)
+        {
+            *existing = result.clone();
+        } else {
+            state_results.push(result.clone());
+        }
+    }
+
+    // 如果测速成功，更新基准延迟
+    if result.success {
+        let baselines = {
+            let checker = state.health_checker.lock().await;
+            checker.get_baselines_arc()
+        };
+        let mut b = baselines.lock().await;
+        b.insert(endpoint.domain.clone(), result.latency);
+    }
+
+    Ok(result)
+}
+
 // ===== 简化工作流命令 =====
 
 /// 启动工作流：测速 + 应用 + 启动健康检查
@@ -1117,6 +1166,8 @@ pub fn run() {
             stop_auto_mode,
             get_auto_mode_status,
             is_auto_mode_running,
+            // 单端点测速
+            test_single_endpoint,
             // 简化工作流
             start_workflow,
             stop_workflow,
