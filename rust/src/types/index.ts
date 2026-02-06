@@ -80,6 +80,7 @@ export interface EndpointHealth {
   baseline_latency: number
   consecutive_failures: number
   is_healthy: boolean
+  recommend_retest?: boolean
 }
 
 export interface CheckResult {

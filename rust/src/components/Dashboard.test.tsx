@@ -132,6 +132,7 @@ describe('Dashboard', () => {
     bindingCount: 0,
     onApply: vi.fn(),
     onToggleWorkflow: vi.fn(),
+    onRetest: vi.fn(),
   }
 
   beforeEach(() => {

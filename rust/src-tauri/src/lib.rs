@@ -25,6 +25,7 @@ use models::{
     AppConfig, Endpoint, EndpointResult, HistoryRecord, HistoryStats, PermissionStatus, UpdateInfo,
     WorkflowResult,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
@@ -63,6 +64,35 @@ fn extract_target_domain(endpoint: &Endpoint) -> String {
     endpoint.name.clone()
 }
 
+/// 按 domain 聚合成功结果，保留延迟最低的 IP
+fn collect_best_success_by_domain(results: &[EndpointResult]) -> HashMap<String, (String, f64)> {
+    let mut best_by_domain = HashMap::new();
+
+    for result in results.iter().filter(|r| r.success) {
+        best_by_domain
+            .entry(result.endpoint.domain.clone())
+            .and_modify(|(best_ip, best_latency): &mut (String, f64)| {
+                if result.latency < *best_latency {
+                    *best_ip = result.ip.clone();
+                    *best_latency = result.latency;
+                }
+            })
+            .or_insert_with(|| (result.ip.clone(), result.latency));
+    }
+
+    best_by_domain
+}
+
+/// 仅保留与当前 hosts 不同的绑定，避免无变化写入触发 DNS 刷新
+fn filter_changed_bindings(bindings: Vec<HostsBinding>) -> Vec<HostsBinding> {
+    bindings
+        .into_iter()
+        .filter(|binding| {
+            hosts_ops::read_binding(&binding.domain).as_deref() != Some(binding.ip.as_str())
+        })
+        .collect()
+}
+
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
     state.config_manager.load().map_err(|e| e.to_string())
@@ -77,13 +107,18 @@ async fn save_config(state: State<'_, AppState>, config: AppConfig) -> Result<()
 }
 
 #[tauri::command]
-async fn start_speed_test(state: State<'_, AppState>) -> Result<Vec<EndpointResult>, String> {
+async fn start_speed_test(
+    state: State<'_, AppState>,
+    update_baseline: Option<bool>,
+) -> Result<Vec<EndpointResult>, String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
     let endpoints: Vec<Endpoint> = config.endpoints.into_iter().filter(|e| e.enabled).collect();
 
     if endpoints.is_empty() {
         return Err("没有启用的端点".into());
     }
+
+    let update_baseline = update_baseline.unwrap_or(true);
 
     let tester = EndpointTester::new(vec![]);
 
@@ -114,16 +149,17 @@ async fn start_speed_test(state: State<'_, AppState>) -> Result<Vec<EndpointResu
         *t = None;
     }
 
-    // 更新基准延迟（避免长时间持有 health_checker 锁）
-    let baselines = {
-        let checker = state.health_checker.lock().await;
-        checker.get_baselines_arc()
-    }; // health_checker 锁在此释放
+    if update_baseline {
+        // 更新基准延迟（避免长时间持有 health_checker 锁）
+        let baselines = {
+            let checker = state.health_checker.lock().await;
+            checker.get_baselines_arc()
+        }; // health_checker 锁在此释放
 
-    for r in &results {
-        if r.success {
-            let mut b = baselines.lock().await;
-            b.insert(r.endpoint.domain.clone(), r.latency);
+        let best_by_domain = collect_best_success_by_domain(&results);
+        let mut b = baselines.lock().await;
+        for (domain, (_, latency)) in best_by_domain {
+            b.insert(domain, latency);
         }
     }
 
@@ -143,9 +179,35 @@ async fn stop_speed_test(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn apply_endpoint(domain: String, ip: String) -> Result<(), String> {
+async fn apply_endpoint(
+    state: State<'_, AppState>,
+    domain: String,
+    ip: String,
+    latency: Option<f64>,
+) -> Result<(), String> {
+    if hosts_ops::read_binding(&domain).as_deref() == Some(ip.as_str()) {
+        if let Some(latency) = latency {
+            let baselines = {
+                let checker = state.health_checker.lock().await;
+                checker.get_baselines_arc()
+            };
+            let mut b = baselines.lock().await;
+            b.insert(domain, latency);
+        }
+        return Ok(());
+    }
+
     hosts_ops::write_binding(&domain, &ip).map_err(|e| e.to_string())?;
-    hosts_ops::flush_dns().map_err(|e| e.to_string())
+    hosts_ops::flush_dns().map_err(|e| e.to_string())?;
+    if let Some(latency) = latency {
+        let baselines = {
+            let checker = state.health_checker.lock().await;
+            checker.get_baselines_arc()
+        };
+        let mut b = baselines.lock().await;
+        b.insert(domain.clone(), latency);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -164,10 +226,11 @@ async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> 
         checker.get_baselines_arc()
     }; // health_checker 锁在此释放
 
-    // 收集所有成功的端点绑定（无论是原始 IP 还是优化 IP，都绑定最优的）
-    let mut bindings: Vec<HostsBinding> = Vec::new();
+    // 收集所有成功的端点绑定（按 domain 去重，取最优结果）
+    let best_by_domain = collect_best_success_by_domain(&results);
+    let mut bindings: Vec<HostsBinding> = Vec::with_capacity(best_by_domain.len());
     let mut history_records: Vec<HistoryRecord> = Vec::new();
-    let mut baseline_updates: Vec<(String, f64)> = Vec::new();
+    let mut baseline_updates: Vec<(String, f64)> = Vec::with_capacity(best_by_domain.len());
 
     for r in results.iter().filter(|r| r.success) {
         // 记录历史
@@ -179,16 +242,16 @@ async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> 
             speedup_percent: r.speedup_percent,
             applied: true, // 总是应用
         });
-
-        // 总是绑定最优 IP（r.ip 已经是最优的了）
-        bindings.push(HostsBinding {
-            domain: r.endpoint.domain.clone(),
-            ip: r.ip.clone(),
-        });
-
-        // 收集基准延迟更新
-        baseline_updates.push((r.endpoint.domain.clone(), r.latency));
     }
+
+    for (domain, (ip, latency)) in best_by_domain {
+        bindings.push(HostsBinding {
+            domain: domain.clone(),
+            ip,
+        });
+        baseline_updates.push((domain, latency));
+    }
+    bindings = filter_changed_bindings(bindings);
 
     // 批量更新基准延迟
     {
@@ -549,11 +612,11 @@ async fn start_workflow(
         let checker = state.health_checker.lock().await;
         checker.get_baselines_arc()
     };
-
-    for r in &results {
-        if r.success {
-            let mut b = baselines.lock().await;
-            b.insert(r.endpoint.domain.clone(), r.latency);
+    let best_by_domain = collect_best_success_by_domain(&results);
+    {
+        let mut b = baselines.lock().await;
+        for (domain, (_, latency)) in &best_by_domain {
+            b.insert(domain.clone(), *latency);
         }
     }
 
@@ -569,9 +632,8 @@ async fn start_workflow(
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
-    let mut bindings: Vec<HostsBinding> = Vec::new();
+    let mut bindings: Vec<HostsBinding> = Vec::with_capacity(best_by_domain.len());
     let mut history_records: Vec<HistoryRecord> = Vec::new();
-    let mut baseline_updates: Vec<(String, f64)> = Vec::new();
     let mut success_count = 0u32;
 
     for r in results.iter().filter(|r| r.success) {
@@ -587,23 +649,15 @@ async fn start_workflow(
             applied: true,
         });
 
-        // 绑定最优 IP
+    }
+
+    for (domain, (ip, _latency)) in &best_by_domain {
         bindings.push(HostsBinding {
-            domain: r.endpoint.domain.clone(),
-            ip: r.ip.clone(),
+            domain: domain.clone(),
+            ip: ip.clone(),
         });
-
-        // 收集基准延迟更新
-        baseline_updates.push((r.endpoint.domain.clone(), r.latency));
     }
-
-    // 批量更新基准延迟
-    {
-        let mut b = baselines.lock().await;
-        for (domain, latency) in baseline_updates {
-            b.insert(domain, latency);
-        }
-    }
+    bindings = filter_changed_bindings(bindings);
 
     // 保存历史记录
     if let Err(e) = state.history_manager.add_records(history_records) {
@@ -964,7 +1018,9 @@ pub fn run() {
                     match event.id.as_ref() {
                         "show" => {
                             if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.set_skip_taskbar(false);
                                 let _ = window.show();
+                                let _ = window.unminimize();
                                 let _ = window.set_focus();
                             }
                         }
@@ -986,7 +1042,9 @@ pub fn run() {
                     } = event
                     {
                         if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.set_skip_taskbar(false);
                             let _ = window.show();
+                            let _ = window.unminimize();
                             let _ = window.set_focus();
                         }
                     }
@@ -1001,6 +1059,7 @@ pub fn run() {
                         // 阻止关闭，改为隐藏窗口到托盘
                         api.prevent_close();
                         if let Some(win) = app_handle.get_webview_window("main") {
+                            let _ = win.set_skip_taskbar(true);
                             let _ = win.hide();
                         }
                     }

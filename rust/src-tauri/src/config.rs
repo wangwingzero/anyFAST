@@ -70,8 +70,8 @@ mod tests {
         let manager = ConfigManager::with_path(config_path);
 
         let config = manager.load().unwrap();
-        assert_eq!(config.check_interval, 30);
-        assert_eq!(config.endpoints.len(), 15); // 15个默认站点
+        assert_eq!(config.check_interval, 120);
+        assert_eq!(config.endpoints.len(), 27); // 27个默认站点
     }
 
     #[test]
@@ -108,9 +108,13 @@ mod tests {
         manager.save(&config).unwrap();
         let loaded = manager.load().unwrap();
 
-        assert_eq!(loaded.endpoints.len(), 16); // 15个默认 + 1个自定义
-        assert_eq!(loaded.endpoints[15].name, "Custom");
-        assert!(!loaded.endpoints[15].enabled);
+        assert_eq!(loaded.endpoints.len(), 28); // 27个默认 + 1个自定义
+        let custom = loaded
+            .endpoints
+            .iter()
+            .find(|e| e.name == "Custom")
+            .expect("missing custom endpoint");
+        assert!(!custom.enabled);
     }
 
     #[test]

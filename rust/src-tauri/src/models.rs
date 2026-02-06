@@ -173,14 +173,14 @@ impl Default for AppConfig {
 }
 
 fn default_check_interval() -> u64 {
-    30
-} // 30秒检查间隔
+    120
+} // 120秒检查间隔
 fn default_slow_threshold() -> u32 {
-    50
-} // 比基准慢50%触发切换
+    150
+} // 比基准慢150%且绝对增加300ms判定为严重变慢
 fn default_failure_threshold() -> u32 {
-    3
-} // 连续3次失败触发切换
+    5
+} // 连续5次失败触发切换
 fn default_test_count() -> u32 {
     3
 }
@@ -192,93 +192,165 @@ fn default_autostart() -> bool {
 fn default_endpoints() -> Vec<Endpoint> {
     vec![
         Endpoint {
-            name: "WONG公益站".into(),
-            url: "https://betterclau.de/claude/wzw.pp.ua".into(),
-            domain: "betterclau.de".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "anyrouter大善人".into(),
+            name: "anyrouter".into(),
             url: "https://betterclau.de/claude/anyrouter.top".into(),
             domain: "betterclau.de".into(),
             enabled: true,
         },
         Endpoint {
-            name: "henryxiaoyang".into(),
-            url: "https://betterclau.de/claude/runanytime.hxi.me".into(),
-            domain: "betterclau.de".into(),
+            name: "chriswilson 6655翻译小站".into(),
+            url: "https://translate-api.6655.pp.ua".into(),
+            domain: "translate-api.6655.pp.ua".into(),
             enabled: true,
         },
         Endpoint {
-            name: "Cyrus (鸭佬)".into(),
-            url: "https://betterclau.de/claude/free.duckcoding.com".into(),
-            domain: "betterclau.de".into(),
+            name: "jun9 霸气公益平台".into(),
+            url: "https://ai.121628.xyz".into(),
+            domain: "ai.121628.xyz".into(),
             enabled: true,
         },
         Endpoint {
-            name: "ByteBender".into(),
-            url: "https://betterclau.de/claude/elysiver.h-e.top".into(),
-            domain: "betterclau.de".into(),
+            name: "jiujiubaba 啾啾小铺".into(),
+            url: "https://api.usegemini.xyz/".into(),
+            domain: "api.usegemini.xyz".into(),
             enabled: true,
         },
         Endpoint {
-            name: "beizhi (Wind Hub)".into(),
-            url: "https://betterclau.de/claude/api.224442.xyz".into(),
-            domain: "betterclau.de".into(),
+            name: "cxy26 佬友API".into(),
+            url: "https://lyclaude.site".into(),
+            domain: "lyclaude.site".into(),
             enabled: true,
         },
         Endpoint {
-            name: "kkkyyx (不过减速带)".into(),
-            url: "https://betterclau.de/claude/kfc-api.sxxe.net".into(),
-            domain: "betterclau.de".into(),
+            name: "panjinxin404 曼波API".into(),
+            url: "https://mb666.zeabur.app/".into(),
+            domain: "mb666.zeabur.app".into(),
             enabled: true,
         },
         Endpoint {
-            name: "钟阮".into(),
-            url: "https://betterclau.de/claude/gyapi.zxiaoruan.cn".into(),
-            domain: "betterclau.de".into(),
+            name: "helsa 摸鱼公益".into(),
+            url: "https://clove.cc.cd/".into(),
+            domain: "clove.cc.cd".into(),
             enabled: true,
         },
         Endpoint {
-            name: "sc0152 (DEV88)".into(),
-            url: "https://betterclau.de/claude/api.dev88.tech".into(),
-            domain: "betterclau.de".into(),
+            name: "user792 慕鸢公益站".into(),
+            url: "https://newapi.linuxdo.edu.rs/".into(),
+            domain: "newapi.linuxdo.edu.rs".into(),
             enabled: true,
         },
         Endpoint {
-            name: "ZeroLiya (小呆)".into(),
-            url: "https://betterclau.de/claude/new.184772.xyz".into(),
-            domain: "betterclau.de".into(),
+            name: "Foward 轻LLM".into(),
+            url: "https://lightllm.online/".into(),
+            domain: "lightllm.online".into(),
             enabled: true,
         },
         Endpoint {
-            name: "freenessfish".into(),
-            url: "https://betterclau.de/claude/welfare.apikey.cc".into(),
-            domain: "betterclau.de".into(),
+            name: "ZeroLiya 小呆公益站".into(),
+            url: "https://api.daiju.live/".into(),
+            domain: "api.daiju.live".into(),
             enabled: true,
         },
         Endpoint {
-            name: "Mitchll".into(),
-            url: "https://betterclau.de/claude/api.mitchll.com".into(),
-            domain: "betterclau.de".into(),
+            name: "小辣椒 公益站".into(),
+            url: "https://yyds.215.im/".into(),
+            domain: "yyds.215.im".into(),
             enabled: true,
         },
         Endpoint {
-            name: "mazhichen等四位大佬".into(),
-            url: "https://betterclau.de/claude/api.hotaruapi.top".into(),
-            domain: "betterclau.de".into(),
+            name: "心尘 公益翻译API".into(),
+            url: "https://api.lianwusuoai.top".into(),
+            domain: "api.lianwusuoai.top".into(),
             enabled: true,
         },
         Endpoint {
-            name: "TechnologyStar".into(),
-            url: "https://betterclau.de/claude/aidrouter.qzz.io".into(),
-            domain: "betterclau.de".into(),
+            name: "sixsixsix 云端API".into(),
+            url: "https://cloudapi.wdyu.eu.cc/".into(),
+            domain: "cloudapi.wdyu.eu.cc".into(),
             enabled: true,
         },
         Endpoint {
-            name: "Simonzhu".into(),
-            url: "https://betterclau.de/claude/ai.zzhdsgsss.xyz".into(),
-            domain: "betterclau.de".into(),
+            name: "Kingo API分享站".into(),
+            url: "https://new-api-bxhm.onrender.com".into(),
+            domain: "new-api-bxhm.onrender.com".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "ByteBender Elysiver".into(),
+            url: "https://elysiver.h-e.top".into(),
+            domain: "elysiver.h-e.top".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "unsafe Embedding".into(),
+            url: "https://router.tumuer.me/".into(),
+            domain: "router.tumuer.me".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "ius GGBOOM公益站".into(),
+            url: "https://ai.qaq.al/".into(),
+            domain: "ai.qaq.al".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "莹酱 HotaruAPI".into(),
+            url: "https://api.hotaruapi.top/".into(),
+            domain: "api.hotaruapi.top".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "zj.z ibsgss公益站".into(),
+            url: "https://codex.ibsgss.uk/".into(),
+            domain: "codex.ibsgss.uk".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "laohui ICAT公益站".into(),
+            url: "https://icat.pp.ua".into(),
+            domain: "icat.pp.ua".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "kkkyyx KFC API".into(),
+            url: "https://kfc-api.sxxe.net".into(),
+            domain: "kfc-api.sxxe.net".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "Simon_z Neb公益站".into(),
+            url: "https://ai.zzhdsgsss.xyz".into(),
+            domain: "ai.zzhdsgsss.xyz".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "123nhh nhh公益站".into(),
+            url: "https://new.123nhh.xyz/".into(),
+            domain: "new.123nhh.xyz".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "WONG公益站".into(),
+            url: "https://wzw.pp.ua".into(),
+            domain: "wzw.pp.ua".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "吴先生 WOW公益站".into(),
+            url: "https://linuxdoapi.223384.xyz/".into(),
+            domain: "linuxdoapi.223384.xyz".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "yuexiaduzou YX公益站".into(),
+            url: "https://api.dx001.ggff.net".into(),
+            domain: "api.dx001.ggff.net".into(),
+            enabled: true,
+        },
+        Endpoint {
+            name: "qq1244 zeabur".into(),
+            url: "https://openai.api-test.us.ci/".into(),
+            domain: "openai.api-test.us.ci".into(),
             enabled: true,
         },
     ]
@@ -408,14 +480,14 @@ mod tests {
     fn test_app_config_default() {
         let config = AppConfig::default();
 
-        assert_eq!(config.check_interval, 30);
-        assert_eq!(config.slow_threshold, 50);
-        assert_eq!(config.failure_threshold, 3);
+        assert_eq!(config.check_interval, 120);
+        assert_eq!(config.slow_threshold, 150);
+        assert_eq!(config.failure_threshold, 5);
         assert_eq!(config.test_count, 3);
         assert!(!config.autostart); // 默认关闭
-        assert_eq!(config.endpoints.len(), 15); // 15个默认站点
-                                                // 第一个是公益站，默认启用
-        assert_eq!(config.endpoints[0].name, "WONG公益站");
+        assert_eq!(config.endpoints.len(), 27); // 27个默认站点
+                                                // 第一个默认启用
+        assert_eq!(config.endpoints[0].name, "anyrouter");
         assert!(config.endpoints[0].enabled);
     }
 
@@ -529,7 +601,7 @@ mod tests {
     #[test]
     fn test_app_config_autostart_default_deserialization() {
         // Test that missing autostart field defaults to false
-        let json = r#"{"mode":"auto","check_interval":30}"#;
+        let json = r#"{"mode":"auto","check_interval":120}"#;
         let parsed: AppConfig = serde_json::from_str(json).unwrap();
         assert!(!parsed.autostart);
     }

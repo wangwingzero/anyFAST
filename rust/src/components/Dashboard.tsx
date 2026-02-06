@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Play, Square, CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Activity, Copy, Check } from 'lucide-react'
+import { Play, Square, CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Activity, Copy, Check, RefreshCw } from 'lucide-react'
 import { Endpoint, EndpointResult, Progress, EndpointHealth } from '../types'
 
 // 可复制文本组件
@@ -158,6 +158,7 @@ interface DashboardProps {
   healthStatus?: EndpointHealth[]
   onApply: (result: EndpointResult) => void
   onToggleWorkflow: () => void  // 切换工作流
+  onRetest: () => void
   onEndpointsChange?: (endpoints: Endpoint[]) => void
   onSaveConfig?: (endpoints: Endpoint[]) => void
 }
@@ -172,6 +173,7 @@ export function Dashboard({
   healthStatus,
   onApply,
   onToggleWorkflow,
+  onRetest,
   onEndpointsChange,
   onSaveConfig,
 }: DashboardProps) {
@@ -183,6 +185,7 @@ export function Dashboard({
   const availableCount = results.filter((r) => r.success).length
   const enabledEndpoints = endpoints.filter((e) => e.enabled)
   const enabledCount = enabledEndpoints.length
+  const needsRetest = healthStatus?.some((h) => h.recommend_retest)
 
   const addEndpoint = () => {
     if (!newUrl.trim() || !onEndpointsChange) return
@@ -231,14 +234,29 @@ export function Dashboard({
           <WorkingIndicator isWorking={isWorking} bindingCount={bindingCount} />
         </div>
         
-        {/* Toggle Button inline */}
-        <ToggleButton
-          isWorking={isWorking}
-          isLoading={isRunning}
-          disabled={enabledCount === 0}
-          onClick={onToggleWorkflow}
-        />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onRetest}
+            disabled={enabledCount === 0 || isRunning}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl bg-apple-blue/10 text-apple-blue hover:bg-apple-blue/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRunning ? 'animate-spin' : ''}`} />
+            重新测速
+          </button>
+          <ToggleButton
+            isWorking={isWorking}
+            isLoading={isRunning}
+            disabled={enabledCount === 0}
+            onClick={onToggleWorkflow}
+          />
+        </div>
       </div>
+
+      {needsRetest && (
+        <div className="mb-3 px-3 py-2 rounded-xl bg-apple-orange/10 text-apple-orange text-sm border border-apple-orange/20">
+          检测到当前线路明显变慢，建议手动重新测速
+        </div>
+      )}
 
       {/* Results Table - 测速结果放在上面，小窗口时优先显示 */}
       <div className="flex-[3] bg-white/70 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[300px] mb-3">

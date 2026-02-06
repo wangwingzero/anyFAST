@@ -27,6 +27,7 @@ Thumbs.db
 # Tool specific
 .ace-tool/
 .claude/
+AGENTS.md
 
 # Python
 __pycache__/

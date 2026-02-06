@@ -23,27 +23,30 @@
 - **开机自启** - 可选开机自动运行
 - **退出清理** - 关闭时自动清除 hosts 绑定
 
-## 📦 内置 15 个公益中转站
+## 📦 内置 18 个公益中转站
 
 感谢各位大佬提供的公益服务！
 
 | 名称 | 站点 |
 |------|------|
-| WONG公益站 | wzw.pp.ua |
-| anyrouter大善人 | anyrouter.top |
-| henryxiaoyang | runanytime.hxi.me |
-| Cyrus (鸭佬) | free.duckcoding.com |
 | ByteBender | elysiver.h-e.top |
-| beizhi (Wind Hub) | api.224442.xyz |
-| kkkyyx (不过减速带) | kfc-api.sxxe.net |
 | 钟阮 | gyapi.zxiaoruan.cn |
-| sc0152 (DEV88) | api.dev88.tech |
-| ZeroLiya (小呆) | new.184772.xyz |
-| freenessfish | welfare.apikey.cc |
-| Mitchll | api.mitchll.com |
-| mazhichen等四位大佬 | api.hotaruapi.top |
+| 不过减速带 (KFC) | kfc-api.sxxe.net |
+| Cyrus（富可敌国的鸭佬） | free.duckcoding.com |
+| WONG公益站 | wzw.pp.ua |
+| apikey 公益站 | welfare.apikey.cc |
+| 随时跑路公益站 | runanytime.hxi.me |
+| Simonzhu (NEB公益站) | ai.zzhdsgsss.xyz |
+| ZeroLiya(小呆公益站) | new.184772.xyz |
+| Mitchll-api 公益站 | api.mitchll.com |
+| Kingo API 分享公益站 | new-api-bxhm.onrender.com |
+| huan 公益站 | ai.huan666.de |
 | TechnologyStar | aidrouter.qzz.io |
-| Simonzhu | ai.zzhdsgsss.xyz |
+| 轻のLLM（foward佬） | lightllm.online |
+| [Wind Hub]公益站 | api.224442.xyz |
+| @mazhichen8780 @colin1112 @zy066 @123nhh | api.hotaruapi.top |
+| DEV88公益站 | api.dev88.tech |
+| anyrouter | anyrouter.top |
 
 ## 📥 下载安装
 

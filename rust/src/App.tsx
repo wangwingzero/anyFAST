@@ -28,6 +28,8 @@ const isPermissionError = (error: unknown): boolean => {
          errorStr.includes('os error 5')  // Windows ERROR_ACCESS_DENIED
 }
 
+const sleepMs = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard')
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
@@ -150,20 +152,45 @@ function App() {
   const declineAdmin = useCallback(() => {
     setUserDeclinedAdmin(true)
     setShowAdminDialog(false)
-    addLog('info', '已跳过管理员权限，部分功能可能受限')
+    addLog('info', '已暂不授权管理员权限，部分功能可能受限')
   }, [addLog])
 
   // 检查权限状态
   const checkPermission = useCallback(async (): Promise<boolean> => {
     try {
-      const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
-      setHasPermission(status.hasPermission)
-      if (status.isUsingService) {
-        addLog('info', isMacOS ? '已连接到 anyFAST Helper' : '已连接到 anyFAST Service')
-      } else if (status.hasPermission) {
-        addLog('info', '以管理员身份运行')
+      // Windows 安装/启动后 service 可能有短暂就绪延迟，自动重试几次避免频繁弹窗
+      const maxAttempts = isMacOS ? 1 : 5
+      let lastStatus: { hasPermission: boolean; isUsingService: boolean } = { hasPermission: false, isUsingService: false }
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (!isMacOS) {
+          try {
+            await invoke('refresh_service_status')
+          } catch {
+            // 刷新失败交给后续 get_permission_status 统一判断
+          }
+        }
+
+        const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
+        lastStatus = status
+
+        if (status.hasPermission) {
+          setHasPermission(true)
+          if (status.isUsingService) {
+            addLog('info', isMacOS ? '已连接到 anyFAST Helper' : '已连接到 anyFAST Service')
+          } else {
+            addLog('info', '以管理员身份运行')
+          }
+          return true
+        }
+
+        if (attempt < maxAttempts && !isMacOS) {
+          await sleepMs(400 * attempt)
+        }
       }
-      return status.hasPermission
+
+      setHasPermission(false)
+      return lastStatus.hasPermission
     } catch (e) {
       console.error('Failed to check permission:', e)
       setHasPermission(false)
@@ -353,6 +380,40 @@ function App() {
     }
   }
 
+  // 手动重新测速（不自动应用）
+  const retestEndpoints = async () => {
+    const enabledCount = endpoints.filter((e) => e.enabled).length
+    if (enabledCount === 0) {
+      addLog('warning', '没有启用的端点，请先添加')
+      showToast('warning', '没有启用的端点')
+      return
+    }
+
+    setIsRunning(true)
+    setProgress({ current: 0, total: enabledCount, message: '正在重新测速...' })
+    addLog('info', `手动重新测速，测试 ${enabledCount} 个端点...`)
+
+    try {
+      const newResults = await invoke<EndpointResult[]>('start_speed_test', { update_baseline: false })
+      setResults(newResults)
+      const successCount = newResults.filter((r) => r.success).length
+      setProgress({
+        current: newResults.length,
+        total: enabledCount,
+        message: `重新测速完成：成功 ${successCount} 个`,
+      })
+      addLog('success', `重新测速完成：成功 ${successCount} 个`)
+      showToast('success', '重新测速完成')
+    } catch (e) {
+      console.error('Retest failed:', e)
+      setProgress({ current: 0, total: 0, message: `重新测速失败: ${e}` })
+      addLog('error', `重新测速失败: ${e}`)
+      showToast('error', `重新测速失败: ${e}`)
+    } finally {
+      setIsRunning(false)
+    }
+  }
+
   const loadConfig = async () => {
     try {
       const cfg = await invoke<AppConfig>('get_config')
@@ -382,7 +443,11 @@ function App() {
 
   const applyEndpoint = async (result: EndpointResult) => {
     try {
-      await invoke('apply_endpoint', { domain: result.endpoint.domain, ip: result.ip })
+      await invoke('apply_endpoint', {
+        domain: result.endpoint.domain,
+        ip: result.ip,
+        latency: result.latency,
+      })
       await refreshBindingCount()
       setProgress({ ...progress, message: `已绑定: ${result.endpoint.domain} → ${result.ip}` })
       addLog('success', `已绑定: ${result.endpoint.domain} → ${result.ip}`)
@@ -475,7 +540,7 @@ function App() {
                 <p className="text-sm text-gray-500">
                   {isMacOS 
                     ? (hasBundledHelper ? '需要安装 Helper 组件' : '需要手动安装 Helper')
-                    : 'Service 连接失败，需要提升权限'
+                    : '无法启用加速功能，需要管理员授权'
                   }
                 </p>
               </div>
@@ -507,30 +572,33 @@ function App() {
               // Windows 说明
               <div className="mb-4">
                 <p className="text-sm text-gray-600 mb-3">
-                  修改 hosts 文件需要管理员权限。Service 未能连接，可能原因：
+                  修改 hosts 文件需要管理员授权。建议按下面顺序尝试：
                 </p>
                 <ul className="text-sm text-gray-600 space-y-2 ml-4">
                   <li className="flex items-start gap-2">
                     <span className="text-gray-400 mt-0.5">•</span>
-                    <span>Service 尚未启动（请稍等几秒后重试）</span>
+                    <span>先点“仅重试连接”（适用于刚启动/刚安装）</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-gray-400 mt-0.5">•</span>
-                    <span>旧版本升级（请重新安装最新版）</span>
+                    <span>仍失败，再点“一键授权并重启”（会弹出系统授权窗口）</span>
                   </li>
                 </ul>
+                <p className="text-xs text-gray-500 mt-3">
+                  仍无法连接可能是旧版本或安全软件拦截，请尝试重新安装最新版。
+                </p>
               </div>
             )}
             
-            <div className="flex gap-3">
-              <button
-                onClick={declineAdmin}
-                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
-              >
-                跳过（仅查看）
-              </button>
-              {isMacOS ? (
-                hasBundledHelper ? (
+            {isMacOS ? (
+              <div className="flex gap-3">
+                <button
+                  onClick={declineAdmin}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
+                >
+                  跳过（仅查看）
+                </button>
+                {hasBundledHelper ? (
                   <button
                     onClick={installMacOSHelper}
                     disabled={isInstallingHelper}
@@ -557,9 +625,21 @@ function App() {
                   >
                     前往下载
                   </a>
-                )
-              ) : (
-                <div className="flex gap-2 flex-1">
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={restartAsAdmin}
+                    className="w-full px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors flex items-center justify-center gap-2"
+                  >
+                    一键授权并重启
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20">推荐</span>
+                  </button>
+                  <p className="text-[11px] text-gray-500 text-center">会弹出系统授权窗口并重启应用</p>
+                </div>
+                <div className="flex flex-col gap-1">
                   <button
                     onClick={async () => {
                       await invoke('refresh_service_status')
@@ -572,19 +652,20 @@ function App() {
                         addLog('warning', 'Service 仍未连接，请稍后重试')
                       }
                     }}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors"
+                    className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors"
                   >
-                    重试连接
+                    仅重试连接
                   </button>
-                  <button
-                    onClick={restartAsAdmin}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors"
-                  >
-                    管理员重启
-                  </button>
+                  <p className="text-[11px] text-gray-500 text-center">适用于刚启动/刚安装</p>
                 </div>
-              )}
-            </div>
+                <button
+                  onClick={declineAdmin}
+                  className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
+                >
+                  暂不授权（仅查看）
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -605,6 +686,7 @@ function App() {
             healthStatus={healthStatus}
             onApply={applyEndpoint}
             onToggleWorkflow={toggleWorkflow}
+            onRetest={retestEndpoints}
             onEndpointsChange={setEndpoints}
             onSaveConfig={saveConfigWithEndpoints}
           />

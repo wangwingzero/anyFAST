@@ -487,7 +487,8 @@ pub fn flush_dns() -> Result<(), HostsError> {
 pub fn get_permission_status() -> (bool, bool) {
     #[cfg(windows)]
     {
-        let service_running = is_service_running();
+        // 每次权限检查都刷新一次 service 状态，避免初次探测失败后缓存卡死
+        let service_running = refresh_service_status();
         if service_running {
             return (true, true);
         }

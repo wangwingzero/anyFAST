@@ -160,6 +160,10 @@ impl EndpointTester {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    pub async fn test_ip(&self, endpoint: &Endpoint, ip: String) -> EndpointResult {
+        self.test_single_ip(endpoint, ip).await
+    }
+
     /// Get CF IPs: custom > online API > default fallback
     async fn get_cf_ips(&self) -> Vec<String> {
         // 1. 如果用户配置了自定义 IP，优先使用
