@@ -62,6 +62,20 @@
 
 ### macOS 使用
 
+> **⚠️ 首次打开提示"已损坏"或"无法验证开发者"？**
+>
+> 这是 macOS Gatekeeper 的安全机制导致的，应用本身没有问题。由于本项目尚未加入 Apple Developer 计划，应用未经过 Apple 公证，macOS 会自动拦截。
+>
+> **解决方法：** 打开「终端」，执行以下命令后即可正常使用：
+>
+> ```bash
+> sudo xattr -rd com.apple.quarantine /Applications/anyFAST.app
+> ```
+>
+> 输入开机密码确认即可（输入时屏幕不显示字符，这是正常的）。
+>
+> 如果安装路径不是 `/Applications`，请替换为实际的 `.app` 路径。
+
 首次启动会提示安装 Helper，点击安装并输入系统密码即可。只需一次，之后永久无感使用。
 
 ## 🚀 使用方法
