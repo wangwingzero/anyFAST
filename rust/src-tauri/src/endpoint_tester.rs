@@ -449,9 +449,11 @@ impl EndpointTester {
         // Resolve DNS using cached resolver
         debug_log!("  DNS 解析: {}", endpoint.domain);
         let dns_start = Instant::now();
-        let dns_result =
-            tokio::time::timeout(DNS_LOOKUP_TIMEOUT, self.resolver.lookup_ip(&endpoint.domain))
-                .await;
+        let dns_result = tokio::time::timeout(
+            DNS_LOOKUP_TIMEOUT,
+            self.resolver.lookup_ip(&endpoint.domain),
+        )
+        .await;
 
         let dns_ips: Vec<String> = match dns_result {
             Ok(Ok(lookup)) => {
