@@ -198,9 +198,25 @@ jobs:
         working-directory: rust
         run: npm ci
 
+      - name: Check macOS signing secrets
+        if: matrix.os == 'macos-latest'
+        id: macos_signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_CERTIFICATE_PASSWORD" ] && [ -n "$KEYCHAIN_PASSWORD" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "macOS code signing enabled."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::macOS signing secrets are missing. Building unsigned macOS artifacts."
+          fi
+
       # ---- macOS 代码签名：导入 Apple Developer 证书 ----
       - name: Import Apple Developer Certificate (macOS only)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && steps.macos_signing.outputs.enabled == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
