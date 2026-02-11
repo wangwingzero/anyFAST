@@ -234,7 +234,7 @@ impl EndpointTester {
         }
 
         // Limit concurrent endpoint tests to avoid overwhelming the system
-        let max_concurrency = endpoints.len().min(MAX_ENDPOINT_CONCURRENCY).max(1);
+        let max_concurrency = endpoints.len().clamp(1, MAX_ENDPOINT_CONCURRENCY);
         debug_log!("最大并发数: {}", max_concurrency);
         let semaphore = Arc::new(Semaphore::new(max_concurrency));
         let mut join_set = JoinSet::new();
@@ -508,7 +508,10 @@ impl EndpointTester {
         loop {
             // 检查总超时
             if ip_test_start.elapsed() > ip_test_timeout {
-                warn_log!("  IP 测试超时 (15s)，已测试部分 IP");
+                warn_log!(
+                    "  IP 测试超时 ({}s)，已测试部分 IP",
+                    IP_TEST_TOTAL_TIMEOUT.as_secs()
+                );
                 join_set.abort_all();
                 break;
             }
