@@ -65,10 +65,42 @@ const MAX_TEST_IPS: usize = 15;
 const MAX_ENDPOINT_CONCURRENCY: usize = 6;
 /// Max concurrent IP tests within one endpoint
 const MAX_IP_CONCURRENCY_PER_ENDPOINT: usize = 6;
+/// DNS lookup timeout for each endpoint
+const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for a single IP test
 const SINGLE_IP_TEST_TIMEOUT: Duration = Duration::from_secs(8);
 /// Total timeout for all IP tests within one endpoint
 const IP_TEST_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
+/// End-to-end workflow timeout bounds (used for dynamic estimation)
+const MIN_WORKFLOW_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_WORKFLOW_TIMEOUT: Duration = Duration::from_secs(180);
+/// Reserve some headroom for outer workflow timeout
+const COLLECT_TIMEOUT_HEADROOM: Duration = Duration::from_secs(5);
+
+/// Estimate a realistic timeout budget for testing `endpoint_count` endpoints.
+/// This prevents long endpoint lists from starving later rows and being marked as 9999ms early.
+pub fn estimate_test_timeout(endpoint_count: usize) -> Duration {
+    if endpoint_count == 0 {
+        return MIN_WORKFLOW_TIMEOUT;
+    }
+
+    let concurrency = endpoint_count.clamp(1, MAX_ENDPOINT_CONCURRENCY);
+    let batches = endpoint_count.div_ceil(concurrency) as u64;
+
+    // Worst-case per endpoint phase:
+    // DNS lookup + original IP probe + optimized IP candidate probing.
+    let per_endpoint_budget = DNS_LOOKUP_TIMEOUT.as_secs()
+        + SINGLE_IP_TEST_TIMEOUT.as_secs()
+        + IP_TEST_TOTAL_TIMEOUT.as_secs();
+
+    // Add fixed scheduling overhead to avoid premature timeout in loaded environments.
+    let estimated_secs = batches * per_endpoint_budget + 15;
+
+    Duration::from_secs(estimated_secs.clamp(
+        MIN_WORKFLOW_TIMEOUT.as_secs(),
+        MAX_WORKFLOW_TIMEOUT.as_secs(),
+    ))
+}
 
 /// Cloudflare IP ranges for detection
 const CF_RANGES: &[&str] = &[
@@ -307,15 +339,18 @@ impl EndpointTester {
 
         let mut results = Vec::with_capacity(endpoints.len());
         let collect_start = Instant::now();
+        let collect_timeout =
+            estimate_test_timeout(spawned_endpoints.len()).saturating_sub(COLLECT_TIMEOUT_HEADROOM);
         let mut panic_count = 0usize;
 
-        // 收集结果，添加总体超时保护（30秒）
+        // 收集结果，使用动态预算而不是固定 30 秒，避免后排端点饥饿
         loop {
             // 检查总体超时
-            if collect_start.elapsed() > Duration::from_secs(30) {
+            if collect_start.elapsed() > collect_timeout {
                 warn_log!(
-                    "收集结果超时（30秒），已收集 {} 个结果，中止剩余任务",
-                    results.len()
+                    "收集结果超时（{}秒），已收集 {} 个结果，中止剩余任务",
+                    collect_timeout.as_secs(),
+                    results.len(),
                 );
                 join_set.abort_all();
                 break;
@@ -411,14 +446,12 @@ impl EndpointTester {
             return EndpointResult::failure(endpoint.clone(), String::new(), "已取消".into());
         }
 
-        // Resolve DNS using cached resolver (with 10s timeout)
+        // Resolve DNS using cached resolver
         debug_log!("  DNS 解析: {}", endpoint.domain);
         let dns_start = Instant::now();
-        let dns_result = tokio::time::timeout(
-            Duration::from_secs(10),
-            self.resolver.lookup_ip(&endpoint.domain),
-        )
-        .await;
+        let dns_result =
+            tokio::time::timeout(DNS_LOOKUP_TIMEOUT, self.resolver.lookup_ip(&endpoint.domain))
+                .await;
 
         let dns_ips: Vec<String> = match dns_result {
             Ok(Ok(lookup)) => {
@@ -440,7 +473,7 @@ impl EndpointTester {
                 );
             }
             Err(_) => {
-                error_log!("  DNS 超时 (10s)");
+                error_log!("  DNS 超时 ({}s)", DNS_LOOKUP_TIMEOUT.as_secs());
                 return EndpointResult::failure(endpoint.clone(), String::new(), "DNS超时".into());
             }
         };

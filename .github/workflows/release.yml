@@ -367,6 +367,14 @@ jobs:
                 "windows-x86_64": {
                   signature: $win_sig,
                   url: $win_url
+                },
+                "windows-x86_64-nsis": {
+                  signature: $win_sig,
+                  url: $win_url
+                },
+                "windows-x86_64-msi": {
+                  signature: $win_sig,
+                  url: $win_url
                 }
               }
             }' > latest.json

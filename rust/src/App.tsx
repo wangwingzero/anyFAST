@@ -319,15 +319,6 @@ function App() {
   // 切换工作流状态（启动/停止）
   const toggleWorkflow = async () => {
     if (isWorking) {
-      const permissionOk = await checkPermission()
-      if (!permissionOk) {
-        if (!userDeclinedAdmin) {
-          setShowAdminDialog(true)
-        }
-        addLog('warning', '停止工作流前权限检查失败，需要管理员授权')
-        return
-      }
-
       // 停止工作流
       setIsRunning(true)
       try {

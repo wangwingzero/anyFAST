@@ -17,7 +17,7 @@ pub mod service;
 pub mod client;
 
 use config::ConfigManager;
-use endpoint_tester::EndpointTester;
+use endpoint_tester::{estimate_test_timeout, EndpointTester};
 use health_checker::{HealthChecker, HealthStatus};
 use history::HistoryManager;
 use hosts_manager::HostsBinding;
@@ -128,10 +128,10 @@ async fn start_speed_test(
         *t = Some(tester.clone());
     }
 
-    // 使用全局超时（60秒）防止永久卡住
+    // 使用动态全局超时，避免大量端点时后排任务被过早判失败
+    let workflow_timeout = estimate_test_timeout(endpoints.len());
     let test_future = tester.test_all(&endpoints);
-    let results = match tokio::time::timeout(std::time::Duration::from_secs(60), test_future).await
-    {
+    let results = match tokio::time::timeout(workflow_timeout, test_future).await {
         Ok(results) => results,
         Err(_) => {
             // 超时，取消测试
@@ -139,7 +139,10 @@ async fn start_speed_test(
             // 清除 tester
             let mut t = state.tester.lock().await;
             *t = None;
-            return Err("测速超时（60秒），请检查网络连接".into());
+            return Err(format!(
+                "测速超时（{}秒），请检查网络连接",
+                workflow_timeout.as_secs()
+            ));
         }
     };
 
