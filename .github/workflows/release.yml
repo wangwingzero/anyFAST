@@ -332,6 +332,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
       - name: Generate latest.json for updater
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -339,18 +344,30 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          # Download signature files from the release artifacts
+          # Download Windows updater artifacts from the release
           mkdir -p sigs
           gh release download "v${VERSION}" \
             --repo "${{ github.repository }}" \
             --pattern "*.nsis.zip.sig" \
-            --dir sigs/ || true
+            --dir sigs/
+          gh release download "v${VERSION}" \
+            --repo "${{ github.repository }}" \
+            --pattern "*.nsis.zip" \
+            --dir sigs/
 
-          # Read Windows NSIS signature
-          WIN_SIG=""
-          if ls sigs/*.nsis.zip.sig 1>/dev/null 2>&1; then
-            WIN_SIG=$(cat sigs/*.nsis.zip.sig)
-          fi
+          WIN_SIG_FILE=$(ls sigs/*.nsis.zip.sig | head -n1)
+          WIN_ZIP_FILE=$(ls sigs/*.nsis.zip | head -n1)
+          WIN_ZIP_NAME=$(basename "$WIN_ZIP_FILE")
+
+          # 验证签名和公钥一致性，避免发布后应用内更新失败
+          PUBKEY_B64=$(jq -r '.plugins.updater.pubkey' rust/src-tauri/tauri.conf.json)
+          echo "$PUBKEY_B64" | base64 --decode > updater.pub
+          base64 --decode "$WIN_SIG_FILE" > windows.sig.decoded
+          minisign -Vm "$WIN_ZIP_FILE" -x windows.sig.decoded -p updater.pub
+
+          # signature 使用 .sig 文件原始内容（base64 文本）
+          WIN_SIG=$(tr -d '\r\n' < "$WIN_SIG_FILE")
+          WIN_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${WIN_ZIP_NAME}"
 
           # Generate latest.json with proper updater format
           jq -n \
@@ -358,7 +375,7 @@ jobs:
             --arg notes "Release v$VERSION" \
             --arg pub_date "$RELEASE_DATE" \
             --arg win_sig "$WIN_SIG" \
-            --arg win_url "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/anyFAST_${VERSION}_x64-setup.nsis.zip" \
+            --arg win_url "$WIN_URL" \
             '{
               version: $version,
               notes: $notes,

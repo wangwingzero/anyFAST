@@ -307,6 +307,15 @@ export function Settings({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
   }
 
+  // 更新错误提示增强
+  const getUpdateErrorHint = (error: string): string | null => {
+    const normalized = error.toLowerCase()
+    if (normalized.includes('signature verification failed') || normalized.includes('invalidsignature')) {
+      return '当前版本内置更新公钥存在历史错误，请先到 GitHub 手动安装一次最新版；安装后应用内更新将恢复正常。'
+    }
+    return null
+  }
+
   const restoreAllDefaults = async () => {
     onEndpointsChange(DEFAULT_ENDPOINTS)
 
@@ -406,6 +415,9 @@ export function Settings({
             {updateError && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-xl">
                 <p className="text-sm text-red-600 mb-2">更新失败: {updateError}</p>
+                {getUpdateErrorHint(updateError) && (
+                  <p className="text-xs text-red-500 mb-2">{getUpdateErrorHint(updateError)}</p>
+                )}
                 <button
                   onClick={openReleasePage}
                   className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-red-600 hover:text-red-700 hover:underline transition-colors"
