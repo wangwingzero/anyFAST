@@ -135,6 +135,8 @@ describe('Dashboard', () => {
     onToggleWorkflow: vi.fn(),
     onRetest: vi.fn(),
     onTestSingle: vi.fn(),
+    onEndpointsChange: vi.fn(),
+    onSaveConfig: vi.fn(),
   }
 
   beforeEach(() => {
@@ -231,6 +233,25 @@ describe('Dashboard', () => {
     expect(onApply).toHaveBeenCalledWith(mockResults[0])
   })
 
+  it('removes endpoint directly from results row', () => {
+    const onEndpointsChange = vi.fn()
+    const onSaveConfig = vi.fn()
+    render(
+      <Dashboard
+        {...defaultProps}
+        results={mockResults}
+        onEndpointsChange={onEndpointsChange}
+        onSaveConfig={onSaveConfig}
+      />,
+    )
+
+    fireEvent.click(screen.getByLabelText('删除测速站点 Test 1'))
+
+    const expected = [mockEndpoints[1]]
+    expect(onEndpointsChange).toHaveBeenCalledWith(expected)
+    expect(onSaveConfig).toHaveBeenCalledWith(expected)
+  })
+
   it('shows loading state when running', () => {
     const progress: Progress = { current: 1, total: 2, message: '正在测试...' }
     render(<Dashboard {...defaultProps} isRunning={true} progress={progress} />)
@@ -264,6 +285,8 @@ describe('Dashboard', () => {
     render(<Dashboard {...defaultProps} results={[failedResult]} />)
 
     // 失败时显示错误信息，但不显示应用按钮
+    expect(screen.getByText('连接超时')).toBeInTheDocument()
+    expect(screen.queryByText('9999ms')).not.toBeInTheDocument()
     expect(screen.queryByText('应用')).not.toBeInTheDocument()
   })
 

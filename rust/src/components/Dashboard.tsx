@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Play, Square, CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Activity, Copy, Check, RefreshCw } from 'lucide-react'
+import { Play, Square, CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Activity, Copy, Check, RefreshCw, Trash2 } from 'lucide-react'
 import { Endpoint, EndpointResult, Progress, EndpointHealth } from '../types'
 
 // 可复制文本组件
@@ -219,6 +219,13 @@ export function Dashboard({
     onSaveConfig?.(newEndpoints)
   }
 
+  const removeEndpointByDomain = (domain: string) => {
+    if (!onEndpointsChange) return
+    const newEndpoints = endpoints.filter((e) => e.domain !== domain)
+    onEndpointsChange(newEndpoints)
+    onSaveConfig?.(newEndpoints)
+  }
+
   return (
     <div className="h-full flex flex-col p-4 lg:p-6 overflow-y-auto">
       {/* Header */}
@@ -306,6 +313,7 @@ export function Dashboard({
                   isTesting={isTesting}
                   onApply={result ? () => onApply(result) : undefined}
                   onTestSingle={() => onTestSingle(endpoint)}
+                  onDelete={onEndpointsChange ? () => removeEndpointByDomain(endpoint.domain) : undefined}
                 />
               )
             })
@@ -443,6 +451,7 @@ function ResultRow({
   isTesting,
   onApply,
   onTestSingle,
+  onDelete,
 }: {
   rank: number
   endpoint: Endpoint
@@ -451,11 +460,14 @@ function ResultRow({
   isTesting?: boolean
   onApply?: () => void
   onTestSingle?: () => void
+  onDelete?: () => void
 }) {
   // 优先使用健康检查的最优 IP，否则使用测速结果
   const displayIp = health?.best_ip || result?.ip || '-'
   const displayLatency = health?.best_latency || result?.latency
   const isLive = !!health?.best_ip  // 是否有实时数据
+  const hasLiveLatency = !!health?.best_ip && !!health?.best_latency && health.best_latency > 0
+  const showFailure = !!result && !result.success && !hasLiveLatency
 
   // 未测试状态
   if (!result && !health) {
@@ -475,36 +487,51 @@ function ResultRow({
         <span className="text-xs lg:text-sm text-apple-gray-300">{isTesting ? '测速中...' : '待测试'}</span>
         <span className="hidden sm:block text-xs lg:text-sm text-apple-gray-300">-</span>
         <div>
-          {onTestSingle && (
-            <button
-              onClick={onTestSingle}
-              disabled={isTesting}
-              className="px-2 lg:px-3 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-blue/10 text-apple-blue hover:bg-apple-blue/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-              title="单独测速"
-            >
-              {isTesting ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : (
-                <RefreshCw className="w-3 h-3" />
-              )}
-              <span className="hidden lg:inline">测速</span>
-            </button>
-          )}
+          <div className="flex items-center gap-1">
+            {onTestSingle && (
+              <button
+                onClick={onTestSingle}
+                disabled={isTesting}
+                className="px-2 lg:px-3 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-blue/10 text-apple-blue hover:bg-apple-blue/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                title="单独测速"
+              >
+                {isTesting ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3 h-3" />
+                )}
+                <span className="hidden lg:inline">测速</span>
+              </button>
+            )}
+            {onDelete && (
+              <button
+                onClick={onDelete}
+                disabled={isTesting}
+                className="px-2 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-red/10 text-apple-red hover:bg-apple-red/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="删除站点"
+                aria-label={`删除测速站点 ${endpoint.name}`}
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     )
   }
 
   const latency = displayLatency || 0
-  const latencyColor = latency > 0
-    ? latency < 200
-      ? 'text-apple-green'
-      : latency < 500
-        ? 'text-apple-gray-600'
-        : latency < 1000
-          ? 'text-apple-orange'
-          : 'text-apple-red'
-    : 'text-apple-red'
+  const latencyColor = showFailure
+    ? 'text-apple-red'
+    : latency > 0
+      ? latency < 200
+        ? 'text-apple-green'
+        : latency < 500
+          ? 'text-apple-gray-600'
+          : latency < 1000
+            ? 'text-apple-orange'
+            : 'text-apple-red'
+      : 'text-apple-red'
 
   // 加速效果显示（始终和原始 DNS IP 对比）
   const renderSpeedupBadge = () => {
@@ -563,7 +590,11 @@ function ResultRow({
         {isTesting ? <span className="text-apple-gray-400">测速中...</span> : displayIp}
       </span>
       <span className={`text-xs lg:text-sm font-medium ${isTesting ? 'text-apple-gray-400' : latencyColor}`}>
-        {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-apple-blue" /> : (latency > 0 ? `${latency.toFixed(0)}ms` : (result?.error || '失败'))}
+        {isTesting
+          ? <Loader2 className="w-3.5 h-3.5 animate-spin text-apple-blue" />
+          : showFailure
+            ? (result?.error || '失败')
+            : (latency > 0 ? `${latency.toFixed(0)}ms` : '-')}
       </span>
       <div className="hidden sm:block">
         {isTesting ? <span className="text-apple-gray-300 text-xs">-</span> : renderSpeedupBadge()}
@@ -581,6 +612,17 @@ function ResultRow({
             ) : (
               <RefreshCw className="w-3 h-3" />
             )}
+          </button>
+        )}
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            disabled={isTesting}
+            className="px-1.5 lg:px-2 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-red/10 text-apple-red hover:bg-apple-red/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="删除站点"
+            aria-label={`删除测速站点 ${endpoint.name}`}
+          >
+            <Trash2 className="w-3 h-3" />
           </button>
         )}
         {result?.success && !result.use_original && onApply && !isTesting && (

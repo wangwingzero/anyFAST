@@ -40,3 +40,6 @@ __pycache__/
 # Tauri signing keys (NEVER commit private keys!)
 rust/.tauri/keys/
 .tauri/
+
+# 私人
+不上传/

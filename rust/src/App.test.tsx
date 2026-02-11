@@ -43,6 +43,8 @@ describe('App', () => {
           return true
         case 'get_permission_status':
           return { hasPermission: true, isUsingService: false }
+        case 'refresh_service_status':
+          return true
         case 'is_workflow_running':
           return false
         case 'start_workflow':
@@ -86,6 +88,20 @@ describe('App', () => {
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('get_binding_count')
     })
+  })
+
+  it('does not auto start workflow on mount when workflow is stopped', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    render(<App />)
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('is_workflow_running')
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 900))
+
+    const startCalls = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'start_workflow')
+    expect(startCalls).toHaveLength(0)
   })
 
   it('shows dashboard by default', async () => {

@@ -1160,30 +1160,6 @@ pub fn run() {
                 });
             }
 
-            // 自动启动健康检查
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                // 延迟 2 秒启动，等待应用完全初始化
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-                // 调用 start_auto_mode
-                if let Some(state) = app_handle.try_state::<AppState>() {
-                    let config = state.config_manager.load().ok();
-                    if let Some(config) = config {
-                        let cancel_token = CancellationToken::new();
-                        {
-                            let mut token = state.auto_mode_token.lock().await;
-                            *token = Some(cancel_token.clone());
-                        }
-
-                        // start() 现在是同步的，在内部 spawn 任务
-                        let checker = state.health_checker.lock().await;
-                        checker.start(app_handle.clone(), config);
-                        // 锁在这里立即释放
-                    }
-                }
-            });
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -251,7 +251,7 @@ function App() {
     await checkWorkflowStatus()
   }
 
-  // 检查工作流运行状态，如果未运行则自动启动
+  // 检查工作流运行状态（仅恢复状态，不自动启动）
   const checkWorkflowStatus = async () => {
     try {
       const running = await invoke<boolean>('is_workflow_running')
@@ -269,13 +269,12 @@ function App() {
           console.error('Failed to get current results:', e)
         }
       } else {
-        // 工作流未运行，自动启动
-        autoStartWorkflow()
+        addLog('info', '工作流当前未运行')
       }
     } catch (e) {
       console.error('Failed to check workflow status:', e)
-      // 检查失败也尝试自动启动
-      autoStartWorkflow()
+      setIsWorking(false)
+      addLog('warning', `检查工作流状态失败: ${e}`)
     }
   }
 
@@ -320,6 +319,15 @@ function App() {
   // 切换工作流状态（启动/停止）
   const toggleWorkflow = async () => {
     if (isWorking) {
+      const permissionOk = await checkPermission()
+      if (!permissionOk) {
+        if (!userDeclinedAdmin) {
+          setShowAdminDialog(true)
+        }
+        addLog('warning', '停止工作流前权限检查失败，需要管理员授权')
+        return
+      }
+
       // 停止工作流
       setIsRunning(true)
       try {
@@ -343,6 +351,15 @@ function App() {
         setIsRunning(false)
       }
     } else {
+      const permissionOk = await checkPermission()
+      if (!permissionOk) {
+        if (!userDeclinedAdmin) {
+          setShowAdminDialog(true)
+        }
+        addLog('warning', '启动工作流前权限检查失败，需要管理员授权')
+        return
+      }
+
       // 启动工作流
       const enabledCount = endpoints.filter((e) => e.enabled).length
       if (enabledCount === 0) {

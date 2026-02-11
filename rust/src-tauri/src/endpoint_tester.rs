@@ -4,6 +4,7 @@ use crate::models::{Endpoint, EndpointResult};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
 use reqwest::Client;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -58,6 +59,17 @@ const DEFAULT_CF_IPS: &[&str] = &[
 /// Online API for fetching optimized Cloudflare IPs
 const IPDB_API_URL: &str = "https://ipdb.api.030101.xyz/?type=bestcf";
 
+/// Max number of candidate IPs for each endpoint
+const MAX_TEST_IPS: usize = 15;
+/// Max concurrent endpoint tests
+const MAX_ENDPOINT_CONCURRENCY: usize = 6;
+/// Max concurrent IP tests within one endpoint
+const MAX_IP_CONCURRENCY_PER_ENDPOINT: usize = 6;
+/// Timeout for a single IP test
+const SINGLE_IP_TEST_TIMEOUT: Duration = Duration::from_secs(8);
+/// Total timeout for all IP tests within one endpoint
+const IP_TEST_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// Cloudflare IP ranges for detection
 const CF_RANGES: &[&str] = &[
     "104.16.", "104.17.", "104.18.", "104.19.", "104.20.", "104.21.", "104.22.", "104.23.",
@@ -67,6 +79,24 @@ const CF_RANGES: &[&str] = &[
 /// Check if an IP is in Cloudflare's range
 pub fn is_cloudflare_ip(ip: &str) -> bool {
     CF_RANGES.iter().any(|r| ip.starts_with(r))
+}
+
+/// Merge candidate IPs in stable order and deduplicate.
+/// Priority: online CF IP list first, then current DNS IPs.
+fn merge_candidate_ips(cf_ips: Vec<String>, dns_ips: &[String], limit: usize) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::with_capacity(limit);
+
+    for ip in cf_ips.into_iter().chain(dns_ips.iter().cloned()) {
+        if seen.insert(ip.clone()) {
+            merged.push(ip);
+            if merged.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    merged
 }
 
 /// Fetch optimized Cloudflare IPs from online API
@@ -204,7 +234,7 @@ impl EndpointTester {
         }
 
         // Limit concurrent endpoint tests to avoid overwhelming the system
-        let max_concurrency = endpoints.len().min(8);
+        let max_concurrency = endpoints.len().min(MAX_ENDPOINT_CONCURRENCY).max(1);
         debug_log!("最大并发数: {}", max_concurrency);
         let semaphore = Arc::new(Semaphore::new(max_concurrency));
         let mut join_set = JoinSet::new();
@@ -446,13 +476,8 @@ impl EndpointTester {
 
         // Collect IPs to test
         let test_ips: Vec<String> = if is_cf {
-            let mut ips = self.get_cf_ips().await;
-            ips.extend(dns_ips.clone());
-            ips.into_iter()
-                .collect::<std::collections::HashSet<_>>()
-                .into_iter()
-                .take(15)
-                .collect()
+            let cf_ips = self.get_cf_ips().await;
+            merge_candidate_ips(cf_ips, &dns_ips, MAX_TEST_IPS)
         } else {
             dns_ips.clone()
         };
@@ -461,17 +486,24 @@ impl EndpointTester {
 
         // Test all IPs concurrently with timeout
         let mut join_set = JoinSet::new();
+        let ip_semaphore = Arc::new(Semaphore::new(MAX_IP_CONCURRENCY_PER_ENDPOINT));
         for ip in test_ips.iter() {
             let ep = endpoint.clone();
             let tester = self.clone();
             let ip_clone = ip.clone();
-            join_set.spawn(async move { tester.test_single_ip(&ep, ip_clone).await });
+            let ip_permit = ip_semaphore.clone();
+            join_set.spawn(async move {
+                match ip_permit.acquire_owned().await {
+                    Ok(_permit) => tester.test_single_ip(&ep, ip_clone).await,
+                    Err(_) => EndpointResult::failure(ep, ip_clone, "并发控制异常".into()),
+                }
+            });
         }
 
         // Collect results with 15s total timeout for all IP tests
         let mut best_result: Option<EndpointResult> = None;
         let ip_test_start = Instant::now();
-        let ip_test_timeout = Duration::from_secs(15);
+        let ip_test_timeout = IP_TEST_TOTAL_TIMEOUT;
 
         loop {
             // 检查总超时
@@ -568,9 +600,8 @@ impl EndpointTester {
     }
 
     async fn test_single_ip(&self, endpoint: &Endpoint, ip: String) -> EndpointResult {
-        let timeout = Duration::from_secs(5);
-
-        match tokio::time::timeout(timeout, self.do_https_test(endpoint, &ip)).await {
+        match tokio::time::timeout(SINGLE_IP_TEST_TIMEOUT, self.do_https_test(endpoint, &ip)).await
+        {
             Ok(Ok(latency)) => EndpointResult::success(endpoint.clone(), ip, latency),
             Ok(Err(e)) => EndpointResult::failure(endpoint.clone(), ip, e),
             Err(_) => EndpointResult::failure(endpoint.clone(), ip, "超时".into()),
@@ -719,6 +750,33 @@ mod tests {
             // All default CF IPs should be recognized as CF IPs
             assert!(is_cloudflare_ip(ip), "IP {} should be recognized as CF", ip);
         }
+    }
+
+    #[test]
+    fn test_merge_candidate_ips_keeps_order_and_dedupes() {
+        let cf_ips = vec![
+            "1.1.1.1".to_string(),
+            "2.2.2.2".to_string(),
+            "1.1.1.1".to_string(),
+            "3.3.3.3".to_string(),
+        ];
+        let dns_ips = vec!["2.2.2.2".to_string(), "4.4.4.4".to_string()];
+
+        let merged = merge_candidate_ips(cf_ips, &dns_ips, 10);
+        assert_eq!(merged, vec!["1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4"]);
+    }
+
+    #[test]
+    fn test_merge_candidate_ips_respects_limit() {
+        let cf_ips = vec![
+            "1.1.1.1".to_string(),
+            "2.2.2.2".to_string(),
+            "3.3.3.3".to_string(),
+        ];
+        let dns_ips = vec!["4.4.4.4".to_string()];
+
+        let merged = merge_candidate_ips(cf_ips, &dns_ips, 2);
+        assert_eq!(merged, vec!["1.1.1.1", "2.2.2.2"]);
     }
 
     #[test]

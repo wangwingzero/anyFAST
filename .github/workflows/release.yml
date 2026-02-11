@@ -2,6 +2,20 @@
 # Release Workflow
 # ============================================================
 #
+# 所需 GitHub Secrets：
+#
+# --- Tauri Updater 签名 ---
+#   TAURI_SIGNING_PRIVATE_KEY          - Tauri 更新签名私钥（base64）
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD - 私钥密码
+#
+# --- macOS 代码签名 & 公证 ---
+#   APPLE_CERTIFICATE          - Developer ID Application 证书（.p12 转 base64）
+#   APPLE_CERTIFICATE_PASSWORD - .p12 导出密码
+#   KEYCHAIN_PASSWORD          - CI 临时 keychain 密码（随意设一个强密码）
+#   APPLE_ID                   - Apple Developer 账号邮箱
+#   APPLE_PASSWORD             - App-Specific Password（在 appleid.apple.com 生成）
+#   APPLE_TEAM_ID              - 开发者团队 ID（10 位）
+#
 # 重要经验：设置 TAURI_SIGNING_PRIVATE_KEY 等 Secrets 时，
 # 必须使用 gh CLI 命令行设置，不要用 GitHub Web UI 粘贴！
 #
@@ -13,6 +27,10 @@
 # 正确做法（在本地终端执行）：
 #   Get-Content ".tauri/anyfast.key" -Raw | gh secret set TAURI_SIGNING_PRIVATE_KEY --repo owner/repo
 #   echo "your-password" | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo owner/repo
+#
+#   macOS 证书设置：
+#   openssl base64 -A -in certificate.p12 -out cert-base64.txt
+#   cat cert-base64.txt | gh secret set APPLE_CERTIFICATE --repo owner/repo
 # ============================================================
 
 name: Release
@@ -180,6 +198,36 @@ jobs:
         working-directory: rust
         run: npm ci
 
+      # ---- macOS 代码签名：导入 Apple Developer 证书 ----
+      - name: Import Apple Developer Certificate (macOS only)
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # 将 base64 编码的证书解码为 .p12 文件
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+
+          # 创建临时 keychain 并导入证书
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+
+          # 验证证书已正确导入并提取签名身份
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | head -1 | awk -F'"' '{print $2}')
+          echo "Found signing identity: $IDENTITY"
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> $GITHUB_ENV
+
+          # 清理 .p12 文件
+          rm -f certificate.p12
+
       - name: Build Windows Service (Windows only)
         if: matrix.os == 'windows-latest'
         working-directory: rust/src-tauri
@@ -221,8 +269,14 @@ jobs:
       - name: Build Tauri app
         working-directory: rust
         env:
+          # Tauri updater 签名密钥
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS 代码签名（APPLE_SIGNING_IDENTITY 由上面的证书导入步骤设置）
+          # macOS 公证（Notarization）—— 需要 Apple Developer 账号
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run tauri build -- --target ${{ matrix.target }}
 
       - name: Upload Windows artifacts
@@ -242,6 +296,11 @@ jobs:
           files: |
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             rust/src-tauri/target/${{ matrix.target }}/release/anyfast-helper-macos
+
+      # ---- macOS: 清理临时 keychain ----
+      - name: Cleanup macOS keychain (macOS only)
+        if: matrix.os == 'macos-latest' && always()
+        run: security delete-keychain build.keychain || true
 
       - name: Upload Linux packages
         if: matrix.os == 'ubuntu-latest'
