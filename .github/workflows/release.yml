@@ -53,19 +53,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify version consistency
-        run: |
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
-          CONFIG_VERSION=$(jq -r '.version' rust/src-tauri/tauri.conf.json)
-          echo "Tag version: $TAG_VERSION"
-          echo "Config version: $CONFIG_VERSION"
-          if [ "$TAG_VERSION" != "$CONFIG_VERSION" ]; then
-            echo "❌ Version mismatch! Tag is v$TAG_VERSION but tauri.conf.json has $CONFIG_VERSION"
-            echo "Please update tauri.conf.json version to $TAG_VERSION before tagging."
-            exit 1
-          fi
-          echo "✅ Version check passed!"
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -118,14 +105,29 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update README version
+      - name: Sync all version files from tag
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          sed -i "s/# anyFAST v[0-9]*\.[0-9]*\.[0-9]*/# anyFAST $VERSION/" README.md
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Syncing all version files to $TAG_VERSION"
+
+          # tauri.conf.json — Tauri 构建时读取的主版本号
+          jq --arg v "$TAG_VERSION" '.version = $v' rust/src-tauri/tauri.conf.json > tmp.json && mv tmp.json rust/src-tauri/tauri.conf.json
+
+          # Cargo.toml — Rust crate 版本号（仅替换 [package] 下的第一个 version）
+          sed -i '0,/^version = ".*"/s/^version = ".*"/version = "'"$TAG_VERSION"'"/' rust/src-tauri/Cargo.toml
+
+          # package.json — 前端版本号
+          jq --arg v "$TAG_VERSION" '.version = $v' rust/package.json > tmp.json && mv tmp.json rust/package.json
+
+          # README.md
+          sed -i "s/# anyFAST v[0-9]*\.[0-9]*\.[0-9]*/# anyFAST v$TAG_VERSION/" README.md
+
+          echo "✅ All versions synced to $TAG_VERSION"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git diff --staged --quiet || git commit -m "docs: update README version to $VERSION"
+          git add rust/src-tauri/tauri.conf.json rust/src-tauri/Cargo.toml rust/package.json README.md
+          git diff --staged --quiet || git commit -m "chore: bump version to $TAG_VERSION"
           git push origin HEAD:main
 
       - name: Create Release
@@ -161,6 +163,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Sync version from tag
+        shell: bash
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Syncing tauri.conf.json version to $TAG_VERSION"
+          jq --arg v "$TAG_VERSION" '.version = $v' rust/src-tauri/tauri.conf.json > tmp.json && mv tmp.json rust/src-tauri/tauri.conf.json
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
