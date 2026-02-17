@@ -308,6 +308,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: |
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
@@ -318,6 +319,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: |
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             rust/src-tauri/target/${{ matrix.target }}/release/anyfast-helper-macos
@@ -331,6 +333,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: |
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
