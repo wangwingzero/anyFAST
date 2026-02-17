@@ -24,7 +24,8 @@ use hosts_manager::HostsBinding;
 use models::{
     AppConfig, Endpoint, EndpointResult, HistoryRecord, HistoryStats, PermissionStatus, UpdateInfo,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
@@ -89,6 +90,28 @@ fn filter_changed_bindings(bindings: Vec<HostsBinding>) -> Vec<HostsBinding> {
         .collect()
 }
 
+/// 归一化用户配置的优选 IP 列表：去空、校验、去重并保持原有顺序
+fn normalize_preferred_ips(raw_ips: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+
+    for ip in raw_ips {
+        let trimmed = ip.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Ok(parsed) = trimmed.parse::<IpAddr>() {
+            let canonical = parsed.to_string();
+            if seen.insert(canonical.clone()) {
+                normalized.push(canonical);
+            }
+        }
+    }
+
+    normalized
+}
+
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
     state.config_manager.load().map_err(|e| e.to_string())
@@ -96,6 +119,8 @@ async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
 
 #[tauri::command]
 async fn save_config(state: State<'_, AppState>, config: AppConfig) -> Result<(), String> {
+    let mut config = config;
+    config.preferred_ips = normalize_preferred_ips(config.preferred_ips);
     state
         .config_manager
         .save(&config)
@@ -116,7 +141,7 @@ async fn start_speed_test(
 
     let update_baseline = update_baseline.unwrap_or(true);
 
-    let tester = EndpointTester::new(vec![], config.test_count);
+    let tester = EndpointTester::new(config.preferred_ips.clone(), config.test_count);
 
     // 保存 tester 以便取消
     {
@@ -499,7 +524,7 @@ async fn test_single_endpoint(
     endpoint: Endpoint,
 ) -> Result<EndpointResult, String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
-    let tester = EndpointTester::new(vec![], config.test_count);
+    let tester = EndpointTester::new(config.preferred_ips.clone(), config.test_count);
 
     // 使用 30 秒超时防止永久卡住
     let result = match tokio::time::timeout(
@@ -881,4 +906,33 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_preferred_ips_should_trim_dedupe_and_drop_invalid() {
+        let input = vec![
+            " 104.26.13.202 ".to_string(),
+            "104.26.13.202".to_string(),
+            "bad-ip".to_string(),
+            "".to_string(),
+            "172.67.74.246".to_string(),
+        ];
+
+        let got = normalize_preferred_ips(input);
+        assert_eq!(
+            got,
+            vec!["104.26.13.202".to_string(), "172.67.74.246".to_string()]
+        );
+    }
+
+    #[test]
+    fn normalize_preferred_ips_should_support_ipv6() {
+        let input = vec!["::1".to_string(), " ::1 ".to_string()];
+        let got = normalize_preferred_ips(input);
+        assert_eq!(got, vec!["::1".to_string()]);
+    }
 }

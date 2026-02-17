@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const mockConfig = {
   autostart: false,
+  preferred_ips: [],
   endpoints: [
     { name: 'Test 1', url: 'https://test1.com/v1', domain: 'test1.com', enabled: true },
     { name: 'Test 2', url: 'https://test2.com/v1', domain: 'test2.com', enabled: true },

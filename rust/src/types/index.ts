@@ -21,6 +21,7 @@ export interface EndpointResult {
 export interface AppConfig {
   endpoints: Endpoint[]
   autostart: boolean
+  preferred_ips: string[]
 }
 
 export interface Progress {

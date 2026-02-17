@@ -18,6 +18,7 @@ export const mockConfig: AppConfig = {
     },
   ],
   autostart: false,
+  preferred_ips: [],
 }
 
 // Mock endpoint results

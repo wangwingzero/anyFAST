@@ -147,6 +147,8 @@ pub struct AppConfig {
     pub autostart: bool,
     #[serde(default = "default_endpoints")]
     pub endpoints: Vec<Endpoint>,
+    #[serde(default = "default_preferred_ips")]
+    pub preferred_ips: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -158,6 +160,7 @@ impl Default for AppConfig {
             test_count: default_test_count(),
             autostart: default_autostart(),
             endpoints: default_endpoints(),
+            preferred_ips: default_preferred_ips(),
         }
     }
 }
@@ -194,6 +197,10 @@ fn default_endpoints() -> Vec<Endpoint> {
             enabled: true,
         },
     ]
+}
+
+fn default_preferred_ips() -> Vec<String> {
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -326,6 +333,7 @@ mod tests {
         assert_eq!(config.test_count, 3);
         assert!(!config.autostart); // 默认关闭
         assert_eq!(config.endpoints.len(), 2); // 2个默认站点
+        assert!(config.preferred_ips.is_empty()); // 默认自动优选
         assert_eq!(config.endpoints[0].name, "anyrouter");
         assert!(config.endpoints[0].enabled);
     }
@@ -338,6 +346,7 @@ mod tests {
 
         assert_eq!(config.check_interval, parsed.check_interval);
         assert_eq!(config.endpoints.len(), parsed.endpoints.len());
+        assert_eq!(config.preferred_ips, parsed.preferred_ips);
     }
 
     #[test]
@@ -390,5 +399,6 @@ mod tests {
         let json = r#"{"mode":"auto","check_interval":120}"#;
         let parsed: AppConfig = serde_json::from_str(json).unwrap();
         assert!(!parsed.autostart);
+        assert!(parsed.preferred_ips.is_empty());
     }
 }
