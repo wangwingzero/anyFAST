@@ -45,18 +45,16 @@ describe('App', () => {
           return { hasPermission: true, isUsingService: false }
         case 'refresh_service_status':
           return true
-        case 'is_workflow_running':
+        case 'has_any_bindings':
           return false
-        case 'start_workflow':
-          return { testCount: 2, successCount: 2, appliedCount: 2, results: mockResults }
-        case 'stop_workflow':
-          return 0
         case 'start_speed_test':
           return mockResults
         case 'apply_all_endpoints':
           return 1
         case 'clear_all_bindings':
           return 0
+        case 'get_current_results':
+          return []
         default:
           return undefined
       }
@@ -67,7 +65,6 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      // Use getAllByText since '仪表盘' appears in both sidebar and heading
       expect(screen.getAllByText('仪表盘').length).toBeGreaterThan(0)
     })
   })
@@ -90,26 +87,10 @@ describe('App', () => {
     })
   })
 
-  it('does not auto start workflow on mount when workflow is stopped', async () => {
-    const { invoke } = await import('@tauri-apps/api/core')
-    render(<App />)
-
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('is_workflow_running')
-    })
-
-    await new Promise((resolve) => setTimeout(resolve, 900))
-
-    const startCalls = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'start_workflow')
-    expect(startCalls).toHaveLength(0)
-  })
-
   it('shows dashboard by default', async () => {
     render(<App />)
 
-    // The app should render without crashing
     await waitFor(() => {
-      // Use role query to be more specific - find the heading
       expect(screen.getByRole('heading', { name: '仪表盘' })).toBeInTheDocument()
     }, { timeout: 5000 })
   })
@@ -121,7 +102,6 @@ describe('App', () => {
       expect(screen.getAllByText('设置').length).toBeGreaterThan(0)
     })
 
-    // Click the settings nav item (in sidebar)
     const settingsNav = screen.getAllByText('设置')[0]
     fireEvent.click(settingsNav)
 
@@ -144,71 +124,29 @@ describe('App', () => {
     })
   })
 
-  it('starts workflow with toggle button', async () => {
+  it('shows three action buttons (测速, 全部绑定)', async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('全部绑定')).toBeInTheDocument()
+    })
+  })
+
+  it('starts speed test when clicking 测速', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('启动')).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: '仪表盘' })).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByText('启动'))
+    // Find the global 测速 button (first one in the control bar)
+    const retestButtons = screen.getAllByText('测速')
+    fireEvent.click(retestButtons[0])
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('start_workflow')
-    })
-  })
-
-  it('shows results after workflow starts', async () => {
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByText('启动')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByText('启动'))
-
-    await waitFor(() => {
-      expect(screen.getByText('100ms')).toBeInTheDocument()
-    })
-  })
-
-  it('adds log entries during operations', async () => {
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByText('启动')).toBeInTheDocument()
-    })
-
-    // Start workflow
-    fireEvent.click(screen.getByText('启动'))
-
-    // Navigate to logs
-    await waitFor(() => {
-      fireEvent.click(screen.getAllByText('运行日志')[0])
-    })
-
-    await waitFor(() => {
-      // Should have some log entries
-      expect(screen.getByText(/已加载配置/)).toBeInTheDocument()
-    })
-  })
-
-  it('handles toggle workflow (start and stop)', async () => {
-    const { invoke } = await import('@tauri-apps/api/core')
-    render(<App />)
-
-    // Wait for config to load
-    await waitFor(() => {
-      expect(screen.getByText('启动')).toBeInTheDocument()
-    })
-
-    // Click to start workflow
-    fireEvent.click(screen.getByText('启动'))
-
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('start_workflow')
-    })
+      expect(invoke).toHaveBeenCalledWith('start_speed_test', expect.anything())
+    }, { timeout: 5000 })
   })
 
   it('handles config load error gracefully', async () => {
@@ -223,11 +161,9 @@ describe('App', () => {
       return undefined
     })
 
-    // Should not crash
     render(<App />)
 
     await waitFor(() => {
-      // Use getAllByText since '仪表盘' appears in both sidebar and heading
       expect(screen.getAllByText('仪表盘').length).toBeGreaterThan(0)
     })
   })

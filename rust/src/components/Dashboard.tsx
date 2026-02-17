@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Play, Square, CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Activity, Copy, Check, RefreshCw, Trash2 } from 'lucide-react'
-import { Endpoint, EndpointResult, Progress, EndpointHealth } from '../types'
+import { CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink } from 'lucide-react'
+import { Endpoint, EndpointResult, Progress } from '../types'
 
 // 可复制文本组件
 function CopyableText({ text, className }: { text: string; className?: string }) {
@@ -32,135 +32,19 @@ function CopyableText({ text, className }: { text: string; className?: string })
   )
 }
 
-// WorkingIndicator 组件 Props 接口
-// Requirements: 5.1, 5.2, 5.3, 5.4
-interface WorkingIndicatorProps {
-  isWorking: boolean
-  bindingCount: number
-}
-
-// WorkingIndicator 组件 - 工作状态指示器
-// Requirement 5.1: 工作状态时显示脉冲动画效果
-// Requirement 5.3: 停止状态时停止动画并显示静态样式
-// Requirement 5.4: 显示当前工作状态文字提示
-export function WorkingIndicator({ isWorking, bindingCount }: WorkingIndicatorProps) {
-  // 根据 isWorking 状态决定显示内容
-  const statusText = isWorking ? '工作中' : '已停止'
-  
-  // 根据状态设置样式
-  // Requirement 5.1: 工作状态时应用脉冲动画 CSS 类
-  // Requirement 5.3: 停止状态时移除脉冲动画 CSS 类
-  const indicatorStyles = isWorking
-    ? 'bg-apple-green/10 border-apple-green/30'
-    : 'bg-apple-gray-100 border-apple-gray-200'
-  
-  const dotStyles = isWorking
-    ? 'bg-apple-green working-indicator-pulse'
-    : 'bg-apple-gray-400'
-  
-  const textStyles = isWorking
-    ? 'text-apple-green'
-    : 'text-apple-gray-500'
-  
-  const iconStyles = isWorking
-    ? 'text-apple-green'
-    : 'text-apple-gray-400'
-
-  return (
-    <div
-      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all duration-300 ${indicatorStyles}`}
-      data-testid="working-indicator"
-      aria-label={`工作状态: ${statusText}`}
-    >
-      {/* 状态指示点 - 工作时有脉冲动画 */}
-      <span
-        className={`w-2 h-2 rounded-full transition-all duration-300 ${dotStyles}`}
-        data-testid="working-indicator-dot"
-      />
-      
-      {/* 状态图标 */}
-      <Activity
-        className={`w-4 h-4 transition-colors duration-300 ${iconStyles}`}
-        data-testid="working-indicator-icon"
-      />
-      
-      {/* 状态文字 */}
-      <span
-        className={`text-sm font-medium transition-colors duration-300 ${textStyles}`}
-        data-testid="working-indicator-text"
-      >
-        {statusText}
-      </span>
-      
-      {/* 绑定数量显示 */}
-      {bindingCount > 0 && (
-        <span
-          className="text-xs text-apple-gray-400 ml-1"
-          data-testid="working-indicator-binding-count"
-        >
-          ({bindingCount} 绑定)
-        </span>
-      )}
-    </div>
-  )
-}
-
-// ToggleButton 组件 Props 接口
-interface ToggleButtonProps {
-  isWorking: boolean
-  isLoading: boolean
-  disabled: boolean
-  onClick: () => void
-}
-
-// ToggleButton 组件 - 启动/停止切换按钮
-// Requirements: 2.3, 2.4, 2.5
-export function ToggleButton({ isWorking, isLoading, disabled, onClick }: ToggleButtonProps) {
-  // 根据 isWorking 状态决定显示内容
-  // Requirement 2.4: 停止状态时显示"启动"文字和启动图标
-  // Requirement 2.5: 启动状态时显示"停止"文字和停止图标
-  const buttonText = isWorking ? '停止' : '启动'
-  const ButtonIcon = isWorking ? Square : Play
-  
-  // 根据状态设置按钮样式
-  // 启动状态（isWorking=true）: 红色按钮 + 活跃动画效果
-  // 停止状态（isWorking=false）: 绿色按钮
-  // Requirement 5.2: 工作状态时显示醒目的活跃状态样式
-  const buttonStyles = isWorking
-    ? 'bg-apple-red shadow-apple-red/20 hover:opacity-90 toggle-button-active'
-    : 'bg-apple-green shadow-apple-green/20 hover:opacity-90'
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled || isLoading}
-      className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 text-white text-sm font-medium rounded-xl shadow-lg btn-press transition-all disabled:opacity-50 disabled:cursor-not-allowed ${buttonStyles}`}
-      data-testid="toggle-button"
-      aria-label={buttonText}
-    >
-      {isLoading ? (
-        <Loader2 className="w-4 h-4 animate-spin" data-testid="toggle-button-loading" />
-      ) : (
-        <ButtonIcon className="w-4 h-4" data-testid={isWorking ? 'toggle-button-stop-icon' : 'toggle-button-start-icon'} />
-      )}
-      <span data-testid="toggle-button-text">{buttonText}</span>
-    </button>
-  )
-}
-
 interface DashboardProps {
   endpoints: Endpoint[]
   results: EndpointResult[]
   isRunning: boolean
-  isWorking: boolean  // 工作状态
   progress: Progress
   bindingCount: number
-  healthStatus?: EndpointHealth[]
-  testingDomains: Set<string>  // 正在单独测速的域名集合
+  testingDomains: Set<string>
   onApply: (result: EndpointResult) => void
-  onToggleWorkflow: () => void  // 切换工作流
+  onApplyAll: () => void
+  onUnbindAll: () => void
+  onUnbindEndpoint: (domain: string) => void
   onRetest: () => void
-  onTestSingle: (endpoint: Endpoint) => void  // 单独测速
+  onTestSingle: (endpoint: Endpoint) => void
   onEndpointsChange?: (endpoints: Endpoint[]) => void
   onSaveConfig?: (endpoints: Endpoint[]) => void
 }
@@ -169,13 +53,13 @@ export function Dashboard({
   endpoints,
   results,
   isRunning,
-  isWorking,
   progress: _progress,
   bindingCount,
-  healthStatus,
   testingDomains,
   onApply,
-  onToggleWorkflow,
+  onApplyAll,
+  onUnbindAll,
+  onUnbindEndpoint,
   onRetest,
   onTestSingle,
   onEndpointsChange,
@@ -189,7 +73,6 @@ export function Dashboard({
   const availableCount = results.filter((r) => r.success).length
   const enabledEndpoints = endpoints.filter((e) => e.enabled)
   const enabledCount = enabledEndpoints.length
-  const needsRetest = healthStatus?.some((h) => h.recommend_retest)
 
   const addEndpoint = () => {
     if (!newUrl.trim() || !onEndpointsChange) return
@@ -240,36 +123,42 @@ export function Dashboard({
           <CompactStatus icon={<Globe className="w-4 h-4" />} label="已测" value={testedCount} color="blue" />
           <CompactStatus icon={<CheckCircle2 className="w-4 h-4" />} label="可用" value={availableCount} color="green" />
           <CompactStatus icon={<Link2 className="w-4 h-4" />} label="绑定" value={bindingCount} color="orange" />
-          
-          {/* Requirement 5.4: 在状态栏区域显示当前工作状态文字提示 */}
-          <WorkingIndicator isWorking={isWorking} bindingCount={bindingCount} />
         </div>
-        
+
         <div className="flex items-center gap-2">
+          {/* 全局测速 */}
           <button
             onClick={onRetest}
             disabled={enabledCount === 0 || isRunning}
             className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl bg-apple-blue/10 text-apple-blue hover:bg-apple-blue/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-4 h-4 ${isRunning ? 'animate-spin' : ''}`} />
-            重新测速
+            测速
           </button>
-          <ToggleButton
-            isWorking={isWorking}
-            isLoading={isRunning}
-            disabled={enabledCount === 0}
-            onClick={onToggleWorkflow}
-          />
+          {/* 全部绑定 */}
+          <button
+            onClick={onApplyAll}
+            disabled={availableCount === 0 || isRunning}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl bg-apple-green/10 text-apple-green hover:bg-apple-green/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Link className="w-4 h-4" />
+            全部绑定
+          </button>
+          {/* 全部解绑 */}
+          {bindingCount > 0 && (
+            <button
+              onClick={onUnbindAll}
+              disabled={isRunning}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl bg-apple-red/10 text-apple-red hover:bg-apple-red/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Unlink className="w-4 h-4" />
+              全部解绑
+            </button>
+          )}
         </div>
       </div>
 
-      {needsRetest && (
-        <div className="mb-3 px-3 py-2 rounded-xl bg-apple-orange/10 text-apple-orange text-sm border border-apple-orange/20">
-          检测到当前线路明显变慢，建议手动重新测速
-        </div>
-      )}
-
-      {/* Results Table - 测速结果放在上面，小窗口时优先显示 */}
+      {/* Results Table */}
       <div className="flex-[3] bg-white/70 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[300px] mb-3">
         <div className="px-3 lg:px-4 py-3 border-b border-apple-gray-200 flex items-center justify-between flex-shrink-0">
           <h2 className="text-sm font-medium text-apple-gray-600">测速结果</h2>
@@ -281,7 +170,7 @@ export function Dashboard({
         {/* Table Container with horizontal scroll */}
         <div className="flex-1 overflow-auto min-h-0">
           {/* Table Header */}
-          <div className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_90px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_120px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
+          <div className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_120px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
             <span>#</span>
             <span>名称</span>
             <span>域名</span>
@@ -301,7 +190,6 @@ export function Dashboard({
           ) : (
             enabledEndpoints.map((endpoint, index) => {
               const result = results.find(r => r.endpoint.domain === endpoint.domain)
-              const health = healthStatus?.find(h => h.domain === endpoint.domain)
               const isTesting = testingDomains.has(endpoint.domain)
               return (
                 <ResultRow
@@ -309,11 +197,12 @@ export function Dashboard({
                   rank={index + 1}
                   endpoint={endpoint}
                   result={result}
-                  health={health}
                   isTesting={isTesting}
                   onApply={result ? () => onApply(result) : undefined}
+                  onUnbind={() => onUnbindEndpoint(endpoint.domain)}
                   onTestSingle={() => onTestSingle(endpoint)}
                   onDelete={onEndpointsChange ? () => removeEndpointByDomain(endpoint.domain) : undefined}
+                  bindingCount={bindingCount}
                 />
               )
             })
@@ -322,7 +211,7 @@ export function Dashboard({
         </div>
       </div>
 
-      {/* Endpoints Management - 端点列表放在下面 */}
+      {/* Endpoints Management */}
       <div className="flex-1 bg-white/70 backdrop-blur-sm rounded-2xl p-3 shadow-sm border border-gray-100 overflow-auto max-h-[200px]">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-medium text-apple-gray-600">端点列表</h2>
@@ -447,33 +336,32 @@ function ResultRow({
   rank,
   endpoint,
   result,
-  health,
   isTesting,
   onApply,
+  onUnbind,
   onTestSingle,
   onDelete,
+  bindingCount: _bindingCount,
 }: {
   rank: number
   endpoint: Endpoint
   result?: EndpointResult
-  health?: EndpointHealth
   isTesting?: boolean
   onApply?: () => void
+  onUnbind?: () => void
   onTestSingle?: () => void
   onDelete?: () => void
+  bindingCount?: number
 }) {
-  // 优先使用健康检查的最优 IP，否则使用测速结果
-  const displayIp = health?.best_ip || result?.ip || '-'
-  const displayLatency = health?.best_latency || result?.latency
-  const isLive = !!health?.best_ip  // 是否有实时数据
-  const hasLiveLatency = !!health?.best_ip && !!health?.best_latency && health.best_latency > 0
-  const showFailure = !!result && !result.success && !hasLiveLatency
+  const displayIp = result?.ip || '-'
+  const displayLatency = result?.latency
+  const showFailure = !!result && !result.success
 
   // 未测试状态
-  if (!result && !health) {
+  if (!result) {
     return (
       <div
-        className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_90px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_120px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 bg-apple-gray-50/50"
+        className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_120px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 bg-apple-gray-50/50"
       >
         <span className="text-xs lg:text-sm text-apple-gray-300">{rank}</span>
         <span className="text-xs lg:text-sm font-medium text-apple-gray-400 truncate">
@@ -533,11 +421,10 @@ function ResultRow({
             : 'text-apple-red'
       : 'text-apple-red'
 
-  // 加速效果显示（始终和原始 DNS IP 对比）
+  // 加速效果显示
   const renderSpeedupBadge = () => {
     if (!result?.success) return null
 
-    // 如果没有原始延迟数据（旧数据兼容）
     if (!result.original_latency || result.original_latency <= 0) {
       return <span className="text-apple-gray-400 text-xs">-</span>
     }
@@ -563,7 +450,6 @@ function ResultRow({
         </span>
       )
     } else {
-      // 加速效果为 0%（和原始一样快）
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-gray-200 text-apple-gray-500 text-xs">
           <Minus className="w-3 h-3" />
@@ -575,7 +461,7 @@ function ResultRow({
 
   return (
     <div
-      className={`grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_90px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_120px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors ${isTesting ? 'bg-apple-blue/5' : ''}`}
+      className={`grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_120px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors ${isTesting ? 'bg-apple-blue/5' : ''}`}
     >
       <span className="text-xs lg:text-sm text-apple-gray-400">{rank}</span>
       <span className="text-xs lg:text-sm font-medium text-apple-gray-600 truncate">
@@ -585,8 +471,7 @@ function ResultRow({
         text={endpoint.url}
         className="text-xs lg:text-sm text-apple-gray-400 font-mono"
       />
-      <span className={`text-xs lg:text-sm font-mono truncate ${isLive ? 'text-apple-blue' : 'text-apple-gray-400'}`} title={isLive ? '实时最优 IP' : '测速结果 IP'}>
-        {isLive && <span className="inline-block w-1.5 h-1.5 rounded-full bg-apple-green mr-1 animate-pulse" />}
+      <span className="text-xs lg:text-sm font-mono text-apple-gray-400 truncate">
         {isTesting ? <span className="text-apple-gray-400">测速中...</span> : displayIp}
       </span>
       <span className={`text-xs lg:text-sm font-medium ${isTesting ? 'text-apple-gray-400' : latencyColor}`}>
@@ -614,6 +499,24 @@ function ResultRow({
             )}
           </button>
         )}
+        {result?.success && onApply && !isTesting && (
+          <button
+            onClick={onApply}
+            className="px-1.5 lg:px-2 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-green/10 text-apple-green hover:bg-apple-green/20"
+            title="绑定到 hosts"
+          >
+            <Link className="w-3 h-3" />
+          </button>
+        )}
+        {onUnbind && !isTesting && (
+          <button
+            onClick={onUnbind}
+            className="px-1.5 lg:px-2 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-orange/10 text-apple-orange hover:bg-apple-orange/20"
+            title="解绑 hosts"
+          >
+            <Unlink className="w-3 h-3" />
+          </button>
+        )}
         {onDelete && (
           <button
             onClick={onDelete}
@@ -623,14 +526,6 @@ function ResultRow({
             aria-label={`删除测速站点 ${endpoint.name}`}
           >
             <Trash2 className="w-3 h-3" />
-          </button>
-        )}
-        {result?.success && !result.use_original && onApply && !isTesting && (
-          <button
-            onClick={onApply}
-            className="px-2 lg:px-3 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-blue text-white hover:bg-apple-blue-hover"
-          >
-            应用
           </button>
         )}
       </div>

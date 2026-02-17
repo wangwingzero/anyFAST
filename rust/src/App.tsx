@@ -1,14 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-// import { relaunch } from '@tauri-apps/plugin-process' // 保留以备将来使用
 import { Sidebar } from './components/Sidebar'
 import { Dashboard } from './components/Dashboard'
 import { Settings } from './components/Settings'
 import { Logs } from './components/Logs'
 import { HistoryView } from './components/HistoryView'
 import { ToastContainer, ToastData, ToastType } from './components'
-import { Endpoint, EndpointResult, AppConfig, LogEntry, EndpointHealth, WorkflowResult } from './types'
+import { Endpoint, EndpointResult, AppConfig, LogEntry } from './types'
 
 type View = 'dashboard' | 'settings' | 'logs' | 'history'
 
@@ -16,16 +14,15 @@ let toastIdCounter = 0
 
 // 检测操作系统
 const isMacOS = navigator.userAgent.includes('Mac')
-// const isWindows = navigator.userAgent.includes('Windows') // 保留以备将来使用
 
 // 检查是否是权限错误
 const isPermissionError = (error: unknown): boolean => {
   const errorStr = String(error).toLowerCase()
-  return errorStr.includes('permission denied') || 
+  return errorStr.includes('permission denied') ||
          errorStr.includes('access denied') ||
          errorStr.includes('administrator') ||
          errorStr.includes('拒绝访问') ||
-         errorStr.includes('os error 5')  // Windows ERROR_ACCESS_DENIED
+         errorStr.includes('os error 5')
 }
 
 const sleepMs = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -41,19 +38,11 @@ function App() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [toasts, setToasts] = useState<ToastData[]>([])
   const [showAdminDialog, setShowAdminDialog] = useState(false)
-  const [healthStatus, setHealthStatus] = useState<EndpointHealth[]>([])
-  const [isWorking, setIsWorking] = useState(false)
-  // 用户是否已拒绝管理员权限提升（当前会话内记住）
   const [userDeclinedAdmin, setUserDeclinedAdmin] = useState(false)
-  // 权限状态
   const [, setHasPermission] = useState<boolean | null>(null)
-  // 是否正在安装 helper
   const [isInstallingHelper, setIsInstallingHelper] = useState(false)
-  // 是否有内置 helper（macOS）
   const [hasBundledHelper, setHasBundledHelper] = useState(false)
-  // Sidebar 刷新触发器
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
-  // 正在单独测速的域名集合
   const [testingDomains, setTestingDomains] = useState<Set<string>>(new Set())
 
   const showToast = useCallback((type: ToastType, message: string) => {
@@ -65,13 +54,11 @@ function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
-  // 添加日志（放在前面，因为其他函数依赖它）
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
     const now = new Date()
     const timestamp = now.toLocaleTimeString('zh-CN', { hour12: false })
     setLogs((prev) => {
       const newLogs = [...prev, { level, message, timestamp }]
-      // 限制最多 500 条
       if (newLogs.length > 500) {
         return newLogs.slice(-500)
       }
@@ -79,8 +66,6 @@ function App() {
     })
   }, [])
 
-  // 处理权限错误，提示用户重启为管理员
-  // 如果用户已经拒绝过，不再弹出对话框
   const handlePermissionError = useCallback((error: unknown) => {
     if (isPermissionError(error)) {
       if (!userDeclinedAdmin) {
@@ -91,49 +76,27 @@ function App() {
     return false
   }, [userDeclinedAdmin])
 
-  // 以管理员身份重启
   const restartAsAdmin = useCallback(async () => {
     try {
       await invoke('restart_as_admin')
     } catch {
-      // 用户取消或出错
       setShowAdminDialog(false)
     }
   }, [])
 
-  // macOS: 安装 helper（使用 osascript 弹出系统密码框）
-  // 注意：这个函数内部调用了 checkPermission 和 checkWorkflowStatus，
-  // 由于 JavaScript 函数提升，这些函数在运行时是可用的
   const installMacOSHelper = async () => {
     try {
       setIsInstallingHelper(true)
       addLog('info', '正在安装 macOS Helper...')
       const result = await invoke<boolean>('install_macos_helper')
-      
+
       if (result) {
         addLog('success', 'Helper 安装成功！')
         showToast('success', '安装成功')
         setShowAdminDialog(false)
         setHasPermission(true)
-        // 触发 Sidebar 刷新权限状态
         setSidebarRefreshTrigger(prev => prev + 1)
-        
-        // 安装成功后，检查权限并继续工作流
-        // 不需要重启，因为后端已经刷新了缓存
-        setTimeout(async () => {
-          try {
-            const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
-            if (status.hasPermission) {
-              addLog('info', '权限验证成功，正在启动工作流...')
-              // 直接调用自动启动工作流
-              autoStartWorkflow()
-            }
-          } catch (e) {
-            console.error('Failed to verify permission after helper install:', e)
-          }
-        }, 500)
       } else {
-        // Helper 不在 bundle 中，提示手动安装
         addLog('warning', '未找到内置 Helper，请从 GitHub 下载')
         showToast('warning', '请从 GitHub Release 下载 Helper')
       }
@@ -150,17 +113,14 @@ function App() {
     }
   }
 
-  // 用户拒绝管理员权限
   const declineAdmin = useCallback(() => {
     setUserDeclinedAdmin(true)
     setShowAdminDialog(false)
     addLog('info', '已暂不授权管理员权限，部分功能可能受限')
   }, [addLog])
 
-  // 检查权限状态
   const checkPermission = useCallback(async (): Promise<boolean> => {
     try {
-      // Windows 安装/启动后 service 可能有短暂就绪延迟，自动重试几次避免频繁弹窗
       const maxAttempts = isMacOS ? 1 : 5
       let lastStatus: { hasPermission: boolean; isUsingService: boolean } = { hasPermission: false, isUsingService: false }
 
@@ -169,7 +129,7 @@ function App() {
           try {
             await invoke('refresh_service_status')
           } catch {
-            // 刷新失败交给后续 get_permission_status 统一判断
+            // ignore
           }
         }
 
@@ -200,7 +160,6 @@ function App() {
     }
   }, [addLog])
 
-  // 检查是否有内置 helper（macOS）
   const checkBundledHelper = useCallback(async () => {
     if (isMacOS) {
       try {
@@ -212,7 +171,6 @@ function App() {
     }
   }, [])
 
-  // 清空日志
   const clearLogs = useCallback(() => {
     setLogs([])
     addLog('info', '日志已清空')
@@ -220,179 +178,34 @@ function App() {
 
   useEffect(() => {
     initializeApp()
-
-    // 监听健康检查结果事件
-    const unlistenHealth = listen<{ endpoints_health: EndpointHealth[] }>('health-check-result', (event) => {
-      setHealthStatus(event.payload.endpoints_health)
-    })
-
-    return () => {
-      unlistenHealth.then(fn => fn())
-    }
   }, [])
 
-  // 应用初始化流程
   const initializeApp = async () => {
     await loadConfig()
     await refreshBindingCount()
     await checkBundledHelper()
-    
-    // 先检查权限状态
+
     const permissionOk = await checkPermission()
-    
+
     if (!permissionOk) {
-      // 没有权限，显示对话框让用户选择
       setShowAdminDialog(true)
       addLog('warning', '没有 hosts 文件写入权限，请选择提升权限或跳过')
       return
     }
-    
-    // 有权限，继续检查工作流状态
-    await checkWorkflowStatus()
-  }
 
-  // 检查工作流运行状态（仅恢复状态，不自动启动）
-  const checkWorkflowStatus = async () => {
+    // 恢复已有的测速结果
     try {
-      const running = await invoke<boolean>('is_workflow_running')
-      setIsWorking(running)
-      if (running) {
-        addLog('info', '检测到工作流正在运行')
-        // 获取当前的测速结果
-        try {
-          const currentResults = await invoke<EndpointResult[]>('get_current_results')
-          if (currentResults && currentResults.length > 0) {
-            setResults(currentResults)
-            addLog('info', `已加载 ${currentResults.length} 个测速结果`)
-          }
-        } catch (e) {
-          console.error('Failed to get current results:', e)
-        }
-      } else {
-        addLog('info', '工作流当前未运行')
+      const currentResults = await invoke<EndpointResult[]>('get_current_results')
+      if (currentResults && currentResults.length > 0) {
+        setResults(currentResults)
+        addLog('info', `已加载 ${currentResults.length} 个测速结果`)
       }
     } catch (e) {
-      console.error('Failed to check workflow status:', e)
-      setIsWorking(false)
-      addLog('warning', `检查工作流状态失败: ${e}`)
+      console.error('Failed to get current results:', e)
     }
   }
 
-  // 自动启动工作流
-  const autoStartWorkflow = async () => {
-    // 等待配置加载完成
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
-    try {
-      const config = await invoke<AppConfig>('get_config')
-      const enabledCount = config.endpoints.filter((e: Endpoint) => e.enabled).length
-      
-      if (enabledCount === 0) {
-        addLog('info', '没有启用的端点，跳过自动启动')
-        return
-      }
-
-      setIsRunning(true)
-      setProgress({ current: 0, total: enabledCount, message: '正在自动启动工作流...' })
-      addLog('info', `自动启动工作流，测试 ${enabledCount} 个端点...`)
-      
-      const result = await invoke<WorkflowResult>('start_workflow')
-      setIsWorking(true)
-      setResults(result.results)
-      await refreshBindingCount()
-      
-      const keptMsg = result.keptCount > 0 ? `，保持 ${result.keptCount} 个稳定绑定` : ''
-      setProgress({ 
-        current: result.testCount, 
-        total: result.testCount, 
-        message: `已应用 ${result.appliedCount} 个绑定${keptMsg}` 
-      })
-      addLog('success', `工作流已自动启动: 测试 ${result.testCount} 个端点，成功 ${result.successCount} 个，应用 ${result.appliedCount} 个绑定${keptMsg}`)
-    } catch (e) {
-      console.error('Auto start workflow failed:', e)
-      addLog('warning', `自动启动失败: ${e}`)
-    } finally {
-      setIsRunning(false)
-    }
-  }
-
-  // 切换工作流状态（启动/停止）
-  const toggleWorkflow = async () => {
-    if (isWorking) {
-      // 停止工作流
-      setIsRunning(true)
-      try {
-        addLog('info', '正在停止工作流...')
-        const clearedCount = await invoke<number>('stop_workflow')
-        setIsWorking(false)
-        await refreshBindingCount()
-        setProgress({ current: 0, total: 0, message: '已停止' })
-        addLog('success', `工作流已停止，清除了 ${clearedCount} 个绑定`)
-        showToast('info', `已停止，清除了 ${clearedCount} 个绑定`)
-        setHealthStatus([])
-      } catch (e) {
-        console.error('Stop workflow failed:', e)
-        if (handlePermissionError(e)) {
-          addLog('error', '停止工作流失败: 需要管理员权限')
-        } else {
-          addLog('error', `停止工作流失败: ${e}`)
-          showToast('error', `停止失败: ${e}`)
-        }
-      } finally {
-        setIsRunning(false)
-      }
-    } else {
-      const permissionOk = await checkPermission()
-      if (!permissionOk) {
-        if (!userDeclinedAdmin) {
-          setShowAdminDialog(true)
-        }
-        addLog('warning', '启动工作流前权限检查失败，需要管理员授权')
-        return
-      }
-
-      // 启动工作流
-      const enabledCount = endpoints.filter((e) => e.enabled).length
-      if (enabledCount === 0) {
-        addLog('warning', '没有启用的端点，请先添加')
-        showToast('warning', '没有启用的端点')
-        return
-      }
-
-      setIsRunning(true)
-      try {
-        setProgress({ current: 0, total: enabledCount, message: '正在启动工作流...' })
-        addLog('info', `正在启动工作流，测试 ${enabledCount} 个端点...`)
-        
-        const result = await invoke<WorkflowResult>('start_workflow')
-        setIsWorking(true)
-        setResults(result.results)
-        await refreshBindingCount()
-        
-        const keptMsg = result.keptCount > 0 ? `，保持 ${result.keptCount} 个稳定绑定` : ''
-        setProgress({ 
-          current: result.testCount, 
-          total: result.testCount, 
-          message: `已应用 ${result.appliedCount} 个绑定${keptMsg}` 
-        })
-        addLog('success', `工作流已启动: 测试 ${result.testCount} 个端点，成功 ${result.successCount} 个，应用 ${result.appliedCount} 个绑定${keptMsg}`)
-        showToast('success', `已启动，应用 ${result.appliedCount} 个${keptMsg}`)
-      } catch (e) {
-        console.error('Start workflow failed:', e)
-        if (handlePermissionError(e)) {
-          addLog('error', '启动工作流失败: 需要管理员权限')
-        } else {
-          setProgress({ current: 0, total: 0, message: `启动失败: ${e}` })
-          addLog('error', `启动工作流失败: ${e}`)
-          showToast('error', `启动失败: ${e}`)
-        }
-      } finally {
-        setIsRunning(false)
-      }
-    }
-  }
-
-  // 手动重新测速（不自动应用）
+  // ===== 全局测速 =====
   const retestEndpoints = async () => {
     const enabledCount = endpoints.filter((e) => e.enabled).length
     if (enabledCount === 0) {
@@ -401,28 +214,162 @@ function App() {
       return
     }
 
+    const permissionOk = await checkPermission()
+    if (!permissionOk) {
+      if (!userDeclinedAdmin) setShowAdminDialog(true)
+      return
+    }
+
     setIsRunning(true)
-    setProgress({ current: 0, total: enabledCount, message: '正在重新测速...' })
-    addLog('info', `手动重新测速，测试 ${enabledCount} 个端点...`)
+    setProgress({ current: 0, total: enabledCount, message: '正在测速...' })
+    addLog('info', `开始测速，测试 ${enabledCount} 个端点...`)
 
     try {
-      const newResults = await invoke<EndpointResult[]>('start_speed_test', { update_baseline: false })
+      const newResults = await invoke<EndpointResult[]>('start_speed_test', { updateBaseline: true })
       setResults(newResults)
       const successCount = newResults.filter((r) => r.success).length
       setProgress({
         current: newResults.length,
         total: enabledCount,
-        message: `重新测速完成：成功 ${successCount} 个`,
+        message: `测速完成：成功 ${successCount} 个`,
       })
-      addLog('success', `重新测速完成：成功 ${successCount} 个`)
-      showToast('success', '重新测速完成')
+      addLog('success', `测速完成：成功 ${successCount}/${enabledCount} 个`)
+      showToast('success', `测速完成: ${successCount} 个可用`)
     } catch (e) {
-      console.error('Retest failed:', e)
-      setProgress({ current: 0, total: 0, message: `重新测速失败: ${e}` })
-      addLog('error', `重新测速失败: ${e}`)
-      showToast('error', `重新测速失败: ${e}`)
+      console.error('Speed test failed:', e)
+      setProgress({ current: 0, total: 0, message: `测速失败: ${e}` })
+      addLog('error', `测速失败: ${e}`)
+      showToast('error', `测速失败: ${e}`)
     } finally {
       setIsRunning(false)
+    }
+  }
+
+  // ===== 全局绑定 =====
+  const applyAll = async () => {
+    const permissionOk = await checkPermission()
+    if (!permissionOk) {
+      if (!userDeclinedAdmin) setShowAdminDialog(true)
+      return
+    }
+
+    try {
+      const count = await invoke<number>('apply_all_endpoints')
+      await refreshBindingCount()
+      addLog('success', `已绑定 ${count} 个端点`)
+      showToast('success', `已绑定 ${count} 个端点`)
+    } catch (e) {
+      console.error('Apply all failed:', e)
+      if (handlePermissionError(e)) {
+        addLog('error', '全部绑定失败: 需要管理员权限')
+      } else {
+        addLog('error', `全部绑定失败: ${e}`)
+        showToast('error', `绑定失败: ${e}`)
+      }
+    }
+  }
+
+  // ===== 全局解绑 =====
+  const unbindAll = async () => {
+    const permissionOk = await checkPermission()
+    if (!permissionOk) {
+      if (!userDeclinedAdmin) setShowAdminDialog(true)
+      return
+    }
+
+    try {
+      const count = await invoke<number>('clear_all_bindings')
+      await refreshBindingCount()
+      addLog('success', `已解绑 ${count} 个端点`)
+      showToast('info', `已解绑 ${count} 个端点`)
+    } catch (e) {
+      console.error('Unbind all failed:', e)
+      if (handlePermissionError(e)) {
+        addLog('error', '全部解绑失败: 需要管理员权限')
+      } else {
+        addLog('error', `全部解绑失败: ${e}`)
+        showToast('error', `解绑失败: ${e}`)
+      }
+    }
+  }
+
+  // ===== 单端点绑定 =====
+  const applyEndpoint = async (result: EndpointResult) => {
+    try {
+      await invoke('apply_endpoint', {
+        domain: result.endpoint.domain,
+        ip: result.ip,
+        latency: result.latency,
+      })
+      await refreshBindingCount()
+      addLog('success', `已绑定: ${result.endpoint.domain} → ${result.ip}`)
+      showToast('success', `已绑定 ${result.endpoint.name}`)
+    } catch (e) {
+      console.error('Apply failed:', e)
+      if (handlePermissionError(e)) {
+        addLog('error', '绑定失败: 需要管理员权限')
+      } else {
+        addLog('error', `绑定失败: ${e}`)
+        showToast('error', `绑定失败: ${e}`)
+      }
+    }
+  }
+
+  // ===== 单端点解绑 =====
+  const unbindEndpoint = async (domain: string) => {
+    try {
+      await invoke('unbind_endpoint', { domain })
+      await refreshBindingCount()
+      addLog('success', `已解绑: ${domain}`)
+      showToast('info', `已解绑 ${domain}`)
+    } catch (e) {
+      console.error('Unbind failed:', e)
+      if (handlePermissionError(e)) {
+        addLog('error', '解绑失败: 需要管理员权限')
+      } else {
+        addLog('error', `解绑失败: ${e}`)
+        showToast('error', `解绑失败: ${e}`)
+      }
+    }
+  }
+
+  // ===== 单端点测速 =====
+  const testSingleEndpoint = async (endpoint: Endpoint) => {
+    const domain = endpoint.domain
+
+    setTestingDomains(prev => new Set(prev).add(domain))
+    addLog('info', `正在单独测速: ${endpoint.name} (${domain})`)
+
+    try {
+      const result = await invoke<EndpointResult>('test_single_endpoint', { endpoint })
+
+      setResults(prev => {
+        const existing = prev.findIndex(r => r.endpoint.domain === domain)
+        if (existing >= 0) {
+          const updated = [...prev]
+          updated[existing] = result
+          return updated
+        }
+        return [...prev, result]
+      })
+
+      if (result.success) {
+        addLog('success', `测速完成: ${endpoint.name} → ${result.ip} (${result.latency.toFixed(0)}ms)`)
+        showToast('success', `${endpoint.name}: ${result.latency.toFixed(0)}ms`)
+      } else {
+        addLog('warning', `测速失败: ${endpoint.name} - ${result.error || '未知错误'}`)
+        showToast('warning', `${endpoint.name} 测速失败`)
+      }
+    } catch (e) {
+      console.error('Single endpoint test failed:', e)
+      addLog('error', `测速出错: ${endpoint.name} - ${e}`)
+      showToast('error', `${endpoint.name} 测速出错`)
+    } finally {
+      setTestingDomains(prev => {
+        const next = new Set(prev)
+        next.delete(domain)
+        return next
+      })
     }
   }
 
@@ -447,119 +394,6 @@ function App() {
     }
   }
 
-  // [已移除] startTest - 由 toggleWorkflow 中的 start_workflow 替代
-  // 原有的手动测速功能已整合到简化工作流中
-
-  // [已移除] stopTest - 由 toggleWorkflow 中的 stop_workflow 替代
-  // 原有的手动停止功能已整合到简化工作流中
-
-  const applyEndpoint = async (result: EndpointResult) => {
-    try {
-      await invoke('apply_endpoint', {
-        domain: result.endpoint.domain,
-        ip: result.ip,
-        latency: result.latency,
-      })
-      await refreshBindingCount()
-      setProgress({ ...progress, message: `已绑定: ${result.endpoint.domain} → ${result.ip}` })
-      addLog('success', `已绑定: ${result.endpoint.domain} → ${result.ip}`)
-      showToast('success', `已绑定 ${result.endpoint.name}`)
-    } catch (e) {
-      console.error('Apply failed:', e)
-      if (handlePermissionError(e)) {
-        addLog('error', `绑定失败: 需要管理员权限`)
-      } else {
-        setProgress({ ...progress, message: `绑定失败: ${e}` })
-        addLog('error', `绑定失败: ${e}`)
-        showToast('error', `绑定失败: ${e}`)
-      }
-    }
-  }
-
-  // 单独测速某个端点
-  const testSingleEndpoint = async (endpoint: Endpoint) => {
-    const domain = endpoint.domain
-    
-    // 标记该域名为测试中
-    setTestingDomains(prev => new Set(prev).add(domain))
-    addLog('info', `正在单独测速: ${endpoint.name} (${domain})`)
-
-    try {
-      const result = await invoke<EndpointResult>('test_single_endpoint', { endpoint })
-      
-      // 更新结果列表
-      setResults(prev => {
-        const existing = prev.findIndex(r => r.endpoint.domain === domain)
-        if (existing >= 0) {
-          const updated = [...prev]
-          updated[existing] = result
-          return updated
-        }
-        return [...prev, result]
-      })
-
-      if (result.success) {
-        addLog('success', `单独测速完成: ${endpoint.name} → ${result.ip} (${result.latency.toFixed(0)}ms)`)
-        showToast('success', `${endpoint.name} 测速完成: ${result.latency.toFixed(0)}ms`)
-      } else {
-        addLog('warning', `单独测速失败: ${endpoint.name} - ${result.error || '未知错误'}`)
-        showToast('warning', `${endpoint.name} 测速失败`)
-      }
-    } catch (e) {
-      console.error('Single endpoint test failed:', e)
-      addLog('error', `单独测速出错: ${endpoint.name} - ${e}`)
-      showToast('error', `${endpoint.name} 测速出错: ${e}`)
-    } finally {
-      // 移除测试中标记
-      setTestingDomains(prev => {
-        const next = new Set(prev)
-        next.delete(domain)
-        return next
-      })
-    }
-  }
-
-  // [已移除] applyAll - 由 toggleWorkflow 中的 start_workflow 替代
-  // const applyAll = async () => {
-  //   try {
-  //     const count = await invoke<number>('apply_all_endpoints')
-  //     await refreshBindingCount()
-  //     setProgress({ ...progress, message: `已绑定 ${count} 个端点` })
-  //     addLog('success', `一键应用完成: 已绑定 ${count} 个端点`)
-  //     showToast('success', `已成功绑定 ${count} 个端点`)
-  //   } catch (e) {
-  //     console.error('Apply all failed:', e)
-  //     if (handlePermissionError(e)) {
-  //       addLog('error', `一键应用失败: 需要管理员权限`)
-  //     } else {
-  //       setProgress({ ...progress, message: `绑定失败: ${e}` })
-  //       addLog('error', `一键应用失败: ${e}`)
-  //       showToast('error', `一键应用失败: ${e}`)
-  //     }
-  //   }
-  // }
-
-  // [已移除] clearBindings - 由 toggleWorkflow 中的 stop_workflow 替代
-  // const clearBindings = async () => {
-  //   try {
-  //     const count = await invoke<number>('clear_all_bindings')
-  //     await refreshBindingCount()
-  //     setProgress({ ...progress, message: `已清除 ${count} 个绑定` })
-  //     addLog('info', `已清除 ${count} 个绑定`)
-  //     showToast('info', `已清除 ${count} 个绑定`)
-  //   } catch (e) {
-  //     console.error('Clear failed:', e)
-  //     if (handlePermissionError(e)) {
-  //       addLog('error', `清除绑定失败: 需要管理员权限`)
-  //     } else {
-  //       setProgress({ ...progress, message: `清除失败: ${e}` })
-  //       addLog('error', `清除绑定失败: ${e}`)
-  //       showToast('error', `清除失败: ${e}`)
-  //     }
-  //   }
-  // }
-
-  // 保存配置（用于仪表盘端点管理）
   const saveConfigWithEndpoints = async (newEndpoints: Endpoint[]) => {
     if (!config) return
     const newConfig = { ...config, endpoints: newEndpoints }
@@ -577,10 +411,8 @@ function App() {
 
   return (
     <div className="flex h-screen bg-[#F5F5F7]">
-      {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />
 
-      {/* Admin Permission Dialog */}
       {showAdminDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md mx-4 animate-in fade-in zoom-in duration-200">
@@ -593,16 +425,15 @@ function App() {
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">需要管理员权限</h3>
                 <p className="text-sm text-gray-500">
-                  {isMacOS 
+                  {isMacOS
                     ? (hasBundledHelper ? '需要安装 Helper 组件' : '需要手动安装 Helper')
                     : '无法启用加速功能，需要管理员授权'
                   }
                 </p>
               </div>
             </div>
-            
+
             {isMacOS ? (
-              // macOS 说明
               <div className="mb-4">
                 {hasBundledHelper ? (
                   <p className="text-sm text-gray-600">
@@ -610,10 +441,10 @@ function App() {
                   </p>
                 ) : (
                   <p className="text-sm text-gray-600">
-                    未找到内置 Helper，请从 
-                    <a 
-                      href="https://github.com/wangwingzero/anyFAST/releases" 
-                      target="_blank" 
+                    未找到内置 Helper，请从
+                    <a
+                      href="https://github.com/wangwingzero/anyFAST/releases"
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-500 hover:underline mx-1"
                     >
@@ -624,7 +455,6 @@ function App() {
                 )}
               </div>
             ) : (
-              // Windows 说明
               <div className="mb-4">
                 <p className="text-sm text-gray-600 mb-3">
                   修改 hosts 文件需要管理员授权。建议按下面顺序尝试：
@@ -632,11 +462,11 @@ function App() {
                 <ul className="text-sm text-gray-600 space-y-2 ml-4">
                   <li className="flex items-start gap-2">
                     <span className="text-gray-400 mt-0.5">•</span>
-                    <span>先点“仅重试连接”（适用于刚启动/刚安装）</span>
+                    <span>先点"仅重试连接"（适用于刚启动/刚安装）</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-gray-400 mt-0.5">•</span>
-                    <span>仍失败，再点“一键授权并重启”（会弹出系统授权窗口）</span>
+                    <span>仍失败，再点"一键授权并重启"（会弹出系统授权窗口）</span>
                   </li>
                 </ul>
                 <p className="text-xs text-gray-500 mt-3">
@@ -644,7 +474,7 @@ function App() {
                 </p>
               </div>
             )}
-            
+
             {isMacOS ? (
               <div className="flex gap-3">
                 <button
@@ -725,23 +555,21 @@ function App() {
         </div>
       )}
 
-      {/* Sidebar */}
       <Sidebar currentView={currentView} onNavigate={setCurrentView} refreshTrigger={sidebarRefreshTrigger} />
 
-      {/* Main Content */}
       <main className="flex-1 overflow-auto min-w-0">
         {currentView === 'dashboard' && (
           <Dashboard
             endpoints={endpoints}
             results={results}
             isRunning={isRunning}
-            isWorking={isWorking}
             progress={progress}
             bindingCount={bindingCount}
-            healthStatus={healthStatus}
             testingDomains={testingDomains}
             onApply={applyEndpoint}
-            onToggleWorkflow={toggleWorkflow}
+            onApplyAll={applyAll}
+            onUnbindAll={unbindAll}
+            onUnbindEndpoint={unbindEndpoint}
             onRetest={retestEndpoints}
             onTestSingle={testSingleEndpoint}
             onEndpointsChange={setEndpoints}

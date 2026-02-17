@@ -70,7 +70,7 @@ const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for a single IP test
 const SINGLE_IP_TEST_TIMEOUT: Duration = Duration::from_secs(8);
 /// Total timeout for all IP tests within one endpoint
-const IP_TEST_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
+const IP_TEST_TOTAL_TIMEOUT: Duration = Duration::from_secs(45);
 /// End-to-end workflow timeout bounds (used for dynamic estimation)
 const MIN_WORKFLOW_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_WORKFLOW_TIMEOUT: Duration = Duration::from_secs(180);
@@ -188,12 +188,14 @@ pub struct EndpointTester {
     cancelled: Arc<AtomicBool>,
     resolver: Arc<TokioAsyncResolver>,
     tls_connector: TlsConnector,
+    /// 每个 IP 测试的轮次（取中位数以提高准确性）
+    test_rounds: u32,
 }
 
 use tokio::sync::Mutex;
 
 impl EndpointTester {
-    pub fn new(custom_cf_ips: Vec<String>) -> Self {
+    pub fn new(custom_cf_ips: Vec<String>, test_rounds: u32) -> Self {
         // Install ring as the default CryptoProvider (safe to call multiple times;
         // needed when both ring and aws-lc-rs features are enabled via deps)
         let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
@@ -213,12 +215,16 @@ impl EndpointTester {
         opts.cache_size = 128;
         let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), opts);
 
+        // Clamp test rounds to 1..=5
+        let test_rounds = test_rounds.clamp(1, 5);
+
         Self {
             custom_cf_ips: Arc::new(custom_cf_ips),
             online_cf_ips: Arc::new(Mutex::new(None)),
             cancelled: Arc::new(AtomicBool::new(false)),
             resolver: Arc::new(resolver),
             tls_connector,
+            test_rounds,
         }
     }
 
@@ -226,6 +232,7 @@ impl EndpointTester {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    #[allow(dead_code)]
     pub async fn test_ip(&self, endpoint: &Endpoint, ip: String) -> EndpointResult {
         self.test_single_ip(endpoint, ip).await
     }
@@ -638,12 +645,39 @@ impl EndpointTester {
     }
 
     async fn test_single_ip(&self, endpoint: &Endpoint, ip: String) -> EndpointResult {
-        match tokio::time::timeout(SINGLE_IP_TEST_TIMEOUT, self.do_https_test(endpoint, &ip)).await
-        {
-            Ok(Ok(latency)) => EndpointResult::success(endpoint.clone(), ip, latency),
-            Ok(Err(e)) => EndpointResult::failure(endpoint.clone(), ip, e),
-            Err(_) => EndpointResult::failure(endpoint.clone(), ip, "超时".into()),
+        let rounds = self.test_rounds as usize;
+        let mut latencies: Vec<f64> = Vec::with_capacity(rounds);
+
+        for round in 0..rounds {
+            match tokio::time::timeout(SINGLE_IP_TEST_TIMEOUT, self.do_https_test(endpoint, &ip))
+                .await
+            {
+                Ok(Ok(latency)) => {
+                    latencies.push(latency);
+                }
+                Ok(Err(_)) | Err(_) => {
+                    // 首轮失败直接放弃（IP 大概率不可达）
+                    if round == 0 {
+                        return EndpointResult::failure(
+                            endpoint.clone(),
+                            ip,
+                            "首轮测试失败".into(),
+                        );
+                    }
+                    // 后续轮次失败忽略，用已有数据
+                }
+            }
         }
+
+        if latencies.is_empty() {
+            return EndpointResult::failure(endpoint.clone(), ip, "全部超时".into());
+        }
+
+        // 取中位数（排序后取中间值，抗抖动）
+        latencies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median = latencies[latencies.len() / 2];
+
+        EndpointResult::success(endpoint.clone(), ip, median)
     }
 
     async fn do_https_test(&self, endpoint: &Endpoint, ip: &str) -> Result<f64, String> {
@@ -831,16 +865,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_endpoint_tester_creation() {
-        let tester = EndpointTester::new(vec![]);
+        let tester = EndpointTester::new(vec![], 3);
 
         // Verify it can be cloned (required for concurrent testing)
         let _cloned = tester.clone();
+        assert_eq!(tester.test_rounds, 3);
     }
 
     #[tokio::test]
     async fn test_endpoint_tester_with_custom_ips() {
         let custom_ips = vec!["1.2.3.4".to_string()];
-        let tester = EndpointTester::new(custom_ips.clone());
+        let tester = EndpointTester::new(custom_ips.clone(), 3);
 
         // Verify custom IPs are stored
         assert_eq!(tester.custom_cf_ips.len(), 1);
@@ -849,7 +884,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_endpoint_tester_cancel() {
-        let tester = EndpointTester::new(vec![]);
+        let tester = EndpointTester::new(vec![], 3);
 
         // Initially not cancelled
         assert!(!tester.cancelled.load(Ordering::SeqCst));
@@ -860,8 +895,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_endpoint_tester_test_rounds_clamping() {
+        let tester_low = EndpointTester::new(vec![], 0);
+        assert_eq!(tester_low.test_rounds, 1);
+
+        let tester_high = EndpointTester::new(vec![], 10);
+        assert_eq!(tester_high.test_rounds, 5);
+
+        let tester_normal = EndpointTester::new(vec![], 3);
+        assert_eq!(tester_normal.test_rounds, 3);
+    }
+
+    #[tokio::test]
     async fn test_test_all_empty_endpoints() {
-        let tester = EndpointTester::new(vec![]);
+        let tester = EndpointTester::new(vec![], 3);
         let results = tester.test_all(&[]).await;
 
         assert!(results.is_empty());

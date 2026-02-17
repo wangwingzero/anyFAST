@@ -388,6 +388,7 @@ pub fn clear_bindings_batch(domains: &[&str]) -> Result<usize, HostsError> {
 /// Clear ALL anyFAST-managed bindings using Service if available, otherwise direct
 /// This removes the entire anyFAST block regardless of current config
 /// On service failure, automatically falls back to direct operation
+#[allow(dead_code)]
 pub fn clear_all_anyfast_bindings() -> Result<usize, HostsError> {
     #[cfg(windows)]
     {

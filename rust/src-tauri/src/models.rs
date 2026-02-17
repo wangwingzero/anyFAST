@@ -133,17 +133,6 @@ pub struct UpdateInfo {
     pub published_at: String,
 }
 
-/// 工作流执行结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowResult {
-    pub test_count: u32,
-    pub success_count: u32,
-    pub applied_count: u32,
-    /// 因当前绑定仍可用而保持不变的域名数（稳定性优先策略）
-    pub kept_count: u32,
-    pub results: Vec<EndpointResult>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -200,159 +189,9 @@ fn default_endpoints() -> Vec<Endpoint> {
             enabled: true,
         },
         Endpoint {
-            name: "chriswilson 6655翻译小站".into(),
-            url: "https://translate-api.6655.pp.ua".into(),
-            domain: "translate-api.6655.pp.ua".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "jun9 霸气公益平台".into(),
-            url: "https://ai.121628.xyz".into(),
-            domain: "ai.121628.xyz".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "jiujiubaba 啾啾小铺".into(),
-            url: "https://api.usegemini.xyz/".into(),
-            domain: "api.usegemini.xyz".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "cxy26 佬友API".into(),
-            url: "https://lyclaude.site".into(),
-            domain: "lyclaude.site".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "panjinxin404 曼波API".into(),
-            url: "https://mb666.zeabur.app/".into(),
-            domain: "mb666.zeabur.app".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "helsa 摸鱼公益".into(),
-            url: "https://clove.cc.cd/".into(),
-            domain: "clove.cc.cd".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "user792 慕鸢公益站".into(),
-            url: "https://newapi.linuxdo.edu.rs/".into(),
-            domain: "newapi.linuxdo.edu.rs".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "Foward 轻LLM".into(),
-            url: "https://lightllm.online/".into(),
-            domain: "lightllm.online".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "ZeroLiya 小呆公益站".into(),
-            url: "https://api.daiju.live/".into(),
-            domain: "api.daiju.live".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "小辣椒 公益站".into(),
-            url: "https://yyds.215.im/".into(),
-            domain: "yyds.215.im".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "心尘 公益翻译API".into(),
-            url: "https://api.lianwusuoai.top".into(),
-            domain: "api.lianwusuoai.top".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "sixsixsix 云端API".into(),
-            url: "https://cloudapi.wdyu.eu.cc/".into(),
-            domain: "cloudapi.wdyu.eu.cc".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "Kingo API分享站".into(),
-            url: "https://new-api-bxhm.onrender.com".into(),
-            domain: "new-api-bxhm.onrender.com".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "ByteBender Elysiver".into(),
-            url: "https://elysiver.h-e.top".into(),
-            domain: "elysiver.h-e.top".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "unsafe Embedding".into(),
-            url: "https://router.tumuer.me/".into(),
-            domain: "router.tumuer.me".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "ius GGBOOM公益站".into(),
-            url: "https://ai.qaq.al/".into(),
-            domain: "ai.qaq.al".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "莹酱 HotaruAPI".into(),
-            url: "https://api.hotaruapi.top/".into(),
-            domain: "api.hotaruapi.top".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "zj.z ibsgss公益站".into(),
-            url: "https://codex.ibsgss.uk/".into(),
-            domain: "codex.ibsgss.uk".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "laohui ICAT公益站".into(),
-            url: "https://icat.pp.ua".into(),
-            domain: "icat.pp.ua".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "kkkyyx KFC API".into(),
-            url: "https://kfc-api.sxxe.net".into(),
-            domain: "kfc-api.sxxe.net".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "Simon_z Neb公益站".into(),
-            url: "https://ai.zzhdsgsss.xyz".into(),
-            domain: "ai.zzhdsgsss.xyz".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "123nhh nhh公益站".into(),
-            url: "https://new.123nhh.xyz/".into(),
-            domain: "new.123nhh.xyz".into(),
-            enabled: true,
-        },
-        Endpoint {
             name: "WONG公益站".into(),
             url: "https://wzw.pp.ua".into(),
             domain: "wzw.pp.ua".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "吴先生 WOW公益站".into(),
-            url: "https://linuxdoapi.223384.xyz/".into(),
-            domain: "linuxdoapi.223384.xyz".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "yuexiaduzou YX公益站".into(),
-            url: "https://api.dx001.ggff.net".into(),
-            domain: "api.dx001.ggff.net".into(),
-            enabled: true,
-        },
-        Endpoint {
-            name: "qq1244 zeabur".into(),
-            url: "https://openai.api-test.us.ci/".into(),
-            domain: "openai.api-test.us.ci".into(),
             enabled: true,
         },
     ]
@@ -487,8 +326,7 @@ mod tests {
         assert_eq!(config.failure_threshold, 5);
         assert_eq!(config.test_count, 3);
         assert!(!config.autostart); // 默认关闭
-        assert_eq!(config.endpoints.len(), 27); // 27个默认站点
-                                                // 第一个默认启用
+        assert_eq!(config.endpoints.len(), 2); // 2个默认站点
         assert_eq!(config.endpoints[0].name, "anyrouter");
         assert!(config.endpoints[0].enabled);
     }
@@ -526,63 +364,6 @@ mod tests {
         assert_eq!(stats.total_speedup_ms, 0.0);
         assert_eq!(stats.avg_speedup_percent, 0.0);
         assert!(stats.records.is_empty());
-    }
-
-    #[test]
-    fn test_workflow_result_creation() {
-        let ep = Endpoint {
-            name: "Test".into(),
-            url: "https://test.com".into(),
-            domain: "test.com".into(),
-            enabled: true,
-        };
-        let endpoint_result = EndpointResult::success(ep, "1.2.3.4".into(), 100.0);
-
-        let workflow_result = WorkflowResult {
-            test_count: 2,
-            success_count: 1,
-            applied_count: 1,
-            kept_count: 0,
-            results: vec![endpoint_result],
-        };
-
-        assert_eq!(workflow_result.test_count, 2);
-        assert_eq!(workflow_result.success_count, 1);
-        assert_eq!(workflow_result.applied_count, 1);
-        assert_eq!(workflow_result.kept_count, 0);
-        assert_eq!(workflow_result.results.len(), 1);
-    }
-
-    #[test]
-    fn test_workflow_result_serialization() {
-        let ep = Endpoint {
-            name: "Test".into(),
-            url: "https://test.com".into(),
-            domain: "test.com".into(),
-            enabled: true,
-        };
-        let endpoint_result = EndpointResult::success(ep, "1.2.3.4".into(), 100.0);
-
-        let workflow_result = WorkflowResult {
-            test_count: 2,
-            success_count: 1,
-            applied_count: 1,
-            kept_count: 0,
-            results: vec![endpoint_result],
-        };
-
-        let json = serde_json::to_string(&workflow_result).unwrap();
-        // Verify camelCase serialization
-        assert!(json.contains("testCount"));
-        assert!(json.contains("successCount"));
-        assert!(json.contains("appliedCount"));
-        assert!(json.contains("keptCount"));
-
-        let parsed: WorkflowResult = serde_json::from_str(&json).unwrap();
-        assert_eq!(workflow_result.test_count, parsed.test_count);
-        assert_eq!(workflow_result.success_count, parsed.success_count);
-        assert_eq!(workflow_result.applied_count, parsed.applied_count);
-        assert_eq!(workflow_result.results.len(), parsed.results.len());
     }
 
     #[test]

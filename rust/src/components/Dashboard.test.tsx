@@ -1,90 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { Dashboard, WorkingIndicator } from './Dashboard'
+import { Dashboard } from './Dashboard'
 import type { Endpoint, EndpointResult, Progress } from '../types'
-
-// WorkingIndicator 组件测试
-// Requirements: 5.1, 5.2, 5.3, 5.4
-describe('WorkingIndicator', () => {
-  it('renders with working state correctly', () => {
-    render(<WorkingIndicator isWorking={true} bindingCount={3} />)
-
-    // Requirement 5.4: 显示工作状态文字提示
-    expect(screen.getByText('工作中')).toBeInTheDocument()
-    expect(screen.getByTestId('working-indicator')).toBeInTheDocument()
-    expect(screen.getByTestId('working-indicator-dot')).toBeInTheDocument()
-    expect(screen.getByTestId('working-indicator-text')).toBeInTheDocument()
-  })
-
-  it('renders with stopped state correctly', () => {
-    render(<WorkingIndicator isWorking={false} bindingCount={0} />)
-
-    // Requirement 5.4: 显示停止状态文字提示
-    expect(screen.getByText('已停止')).toBeInTheDocument()
-  })
-
-  it('applies pulse animation class when working', () => {
-    render(<WorkingIndicator isWorking={true} bindingCount={0} />)
-
-    // Requirement 5.1: 工作状态时应用脉冲动画 CSS 类
-    const dot = screen.getByTestId('working-indicator-dot')
-    expect(dot).toHaveClass('working-indicator-pulse')
-    expect(dot).toHaveClass('bg-apple-green')
-  })
-
-  it('removes pulse animation class when stopped', () => {
-    render(<WorkingIndicator isWorking={false} bindingCount={0} />)
-
-    // Requirement 5.3: 停止状态时移除脉冲动画 CSS 类
-    const dot = screen.getByTestId('working-indicator-dot')
-    expect(dot).not.toHaveClass('working-indicator-pulse')
-    expect(dot).toHaveClass('bg-apple-gray-400')
-  })
-
-  it('displays binding count when greater than zero', () => {
-    render(<WorkingIndicator isWorking={true} bindingCount={5} />)
-
-    expect(screen.getByTestId('working-indicator-binding-count')).toBeInTheDocument()
-    expect(screen.getByText('(5 绑定)')).toBeInTheDocument()
-  })
-
-  it('hides binding count when zero', () => {
-    render(<WorkingIndicator isWorking={true} bindingCount={0} />)
-
-    expect(screen.queryByTestId('working-indicator-binding-count')).not.toBeInTheDocument()
-  })
-
-  it('has correct aria-label for accessibility', () => {
-    const { rerender } = render(<WorkingIndicator isWorking={true} bindingCount={0} />)
-    
-    expect(screen.getByTestId('working-indicator')).toHaveAttribute('aria-label', '工作状态: 工作中')
-
-    rerender(<WorkingIndicator isWorking={false} bindingCount={0} />)
-    expect(screen.getByTestId('working-indicator')).toHaveAttribute('aria-label', '工作状态: 已停止')
-  })
-
-  it('applies correct styles when working', () => {
-    render(<WorkingIndicator isWorking={true} bindingCount={0} />)
-
-    const indicator = screen.getByTestId('working-indicator')
-    expect(indicator).toHaveClass('bg-apple-green/10')
-    expect(indicator).toHaveClass('border-apple-green/30')
-
-    const text = screen.getByTestId('working-indicator-text')
-    expect(text).toHaveClass('text-apple-green')
-  })
-
-  it('applies correct styles when stopped', () => {
-    render(<WorkingIndicator isWorking={false} bindingCount={0} />)
-
-    const indicator = screen.getByTestId('working-indicator')
-    expect(indicator).toHaveClass('bg-apple-gray-100')
-    expect(indicator).toHaveClass('border-apple-gray-200')
-
-    const text = screen.getByTestId('working-indicator-text')
-    expect(text).toHaveClass('text-apple-gray-500')
-  })
-})
 
 describe('Dashboard', () => {
   const mockEndpoints: Endpoint[] = [
@@ -125,14 +42,15 @@ describe('Dashboard', () => {
 
   const defaultProps = {
     endpoints: mockEndpoints,
-    results: [],
+    results: [] as EndpointResult[],
     isRunning: false,
-    isWorking: false,
     progress: mockProgress,
     bindingCount: 0,
     testingDomains: new Set<string>(),
     onApply: vi.fn(),
-    onToggleWorkflow: vi.fn(),
+    onApplyAll: vi.fn(),
+    onUnbindAll: vi.fn(),
+    onUnbindEndpoint: vi.fn(),
     onRetest: vi.fn(),
     onTestSingle: vi.fn(),
     onEndpointsChange: vi.fn(),
@@ -153,7 +71,6 @@ describe('Dashboard', () => {
   it('renders status cards with initial values', () => {
     render(<Dashboard {...defaultProps} />)
 
-    // 紧凑布局使用简短标签
     expect(screen.getByText('已测')).toBeInTheDocument()
     expect(screen.getByText('可用')).toBeInTheDocument()
     expect(screen.getByText('绑定')).toBeInTheDocument()
@@ -165,72 +82,109 @@ describe('Dashboard', () => {
     expect(screen.getByText('请先添加端点')).toBeInTheDocument()
   })
 
-  it('shows start button when not working', () => {
+  // 三按钮模式测试
+  it('shows 测速 button', () => {
     render(<Dashboard {...defaultProps} />)
 
-    // ToggleButton shows "启动" when isWorking is false
-    expect(screen.getByText('启动')).toBeInTheDocument()
-    expect(screen.queryByText('停止')).not.toBeInTheDocument()
+    // 全局测速按钮 + 每行的测速按钮都有"测速"文本
+    expect(screen.getAllByText('测速').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('shows stop button when working', () => {
-    render(<Dashboard {...defaultProps} isWorking={true} />)
+  it('shows 全部绑定 button', () => {
+    render(<Dashboard {...defaultProps} results={mockResults} />)
 
-    // ToggleButton shows "停止" when isWorking is true
-    expect(screen.getByText('停止')).toBeInTheDocument()
-    expect(screen.queryByText('启动')).not.toBeInTheDocument()
+    expect(screen.getByText('全部绑定')).toBeInTheDocument()
   })
 
-  it('calls onToggleWorkflow when clicking toggle button (start)', () => {
-    const onToggleWorkflow = vi.fn()
-    render(<Dashboard {...defaultProps} onToggleWorkflow={onToggleWorkflow} />)
+  it('shows 全部解绑 button when bindings exist', () => {
+    render(<Dashboard {...defaultProps} bindingCount={2} />)
 
-    fireEvent.click(screen.getByText('启动'))
-    expect(onToggleWorkflow).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('全部解绑')).toBeInTheDocument()
   })
 
-  it('calls onToggleWorkflow when clicking toggle button (stop)', () => {
-    const onToggleWorkflow = vi.fn()
-    render(<Dashboard {...defaultProps} isWorking={true} onToggleWorkflow={onToggleWorkflow} />)
+  it('hides 全部解绑 button when no bindings', () => {
+    render(<Dashboard {...defaultProps} bindingCount={0} />)
 
-    fireEvent.click(screen.getByText('停止'))
-    expect(onToggleWorkflow).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('全部解绑')).not.toBeInTheDocument()
   })
 
-  it('disables toggle button when no endpoints', () => {
+  it('calls onRetest when clicking global 测速 button', () => {
+    const onRetest = vi.fn()
+    render(<Dashboard {...defaultProps} onRetest={onRetest} />)
+
+    // 全局测速按钮是第一个包含"测速"文本的按钮
+    const retestButtons = screen.getAllByText('测速')
+    fireEvent.click(retestButtons[0])
+    expect(onRetest).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls onApplyAll when clicking 全部绑定 button', () => {
+    const onApplyAll = vi.fn()
+    render(<Dashboard {...defaultProps} results={mockResults} onApplyAll={onApplyAll} />)
+
+    fireEvent.click(screen.getByText('全部绑定'))
+    expect(onApplyAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls onUnbindAll when clicking 全部解绑 button', () => {
+    const onUnbindAll = vi.fn()
+    render(<Dashboard {...defaultProps} bindingCount={2} onUnbindAll={onUnbindAll} />)
+
+    fireEvent.click(screen.getByText('全部解绑'))
+    expect(onUnbindAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables 测速 button when no endpoints', () => {
     render(<Dashboard {...defaultProps} endpoints={[]} />)
 
-    const toggleButton = screen.getByText('启动')
-    expect(toggleButton.closest('button')).toBeDisabled()
+    // 无端点时只有全局测速按钮
+    const retestBtn = screen.getByText('测速').closest('button')
+    expect(retestBtn).toBeDisabled()
+  })
+
+  it('disables 全部绑定 button when no available results', () => {
+    render(<Dashboard {...defaultProps} results={[]} />)
+
+    const applyAllBtn = screen.getByText('全部绑定').closest('button')
+    expect(applyAllBtn).toBeDisabled()
   })
 
   it('renders results table with data', () => {
     render(<Dashboard {...defaultProps} results={mockResults} />)
 
-    // Test 1 and Test 2 appear in both endpoint list and results table
     expect(screen.getAllByText('Test 1').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Test 2').length).toBeGreaterThanOrEqual(1)
-    // Dashboard shows URL, not domain
     expect(screen.getAllByText('https://test1.com/v1').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('https://test2.com/v1').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('100ms')).toBeInTheDocument()
     expect(screen.getByText('150ms')).toBeInTheDocument()
   })
 
-  it('shows apply button for successful results', () => {
-    render(<Dashboard {...defaultProps} results={mockResults} />)
-
-    const applyButtons = screen.getAllByText('应用')
-    expect(applyButtons).toHaveLength(2)
-  })
-
-  it('calls onApply when clicking apply button', () => {
+  it('calls onApply when clicking per-endpoint bind button', () => {
     const onApply = vi.fn()
     render(<Dashboard {...defaultProps} results={mockResults} onApply={onApply} />)
 
-    const applyButtons = screen.getAllByText('应用')
-    fireEvent.click(applyButtons[0])
+    // Per-endpoint bind buttons use Link icon with title "绑定到 hosts"
+    const bindButtons = screen.getAllByTitle('绑定到 hosts')
+    expect(bindButtons).toHaveLength(2)
+    fireEvent.click(bindButtons[0])
     expect(onApply).toHaveBeenCalledWith(mockResults[0])
+  })
+
+  it('shows per-endpoint unbind buttons', () => {
+    render(<Dashboard {...defaultProps} results={mockResults} />)
+
+    const unbindButtons = screen.getAllByTitle('解绑 hosts')
+    expect(unbindButtons).toHaveLength(2)
+  })
+
+  it('calls onUnbindEndpoint when clicking per-endpoint unbind button', () => {
+    const onUnbindEndpoint = vi.fn()
+    render(<Dashboard {...defaultProps} results={mockResults} onUnbindEndpoint={onUnbindEndpoint} />)
+
+    const unbindButtons = screen.getAllByTitle('解绑 hosts')
+    fireEvent.click(unbindButtons[0])
+    expect(onUnbindEndpoint).toHaveBeenCalledWith('test1.com')
   })
 
   it('removes endpoint directly from results row', () => {
@@ -252,18 +206,9 @@ describe('Dashboard', () => {
     expect(onSaveConfig).toHaveBeenCalledWith(expected)
   })
 
-  it('shows loading state when running', () => {
-    const progress: Progress = { current: 1, total: 2, message: '正在测试...' }
-    render(<Dashboard {...defaultProps} isRunning={true} progress={progress} />)
-
-    // 当 isRunning=true 时，ToggleButton 显示 loading 状态
-    expect(screen.getByTestId('toggle-button-loading')).toBeInTheDocument()
-  })
-
   it('shows speedup percentage for optimized results', () => {
     render(<Dashboard {...defaultProps} results={mockResults} />)
 
-    // Look for speedup indicators
     const speedupBadges = screen.getAllByText(/↑ 50%/)
     expect(speedupBadges).toHaveLength(2)
   })
@@ -284,70 +229,15 @@ describe('Dashboard', () => {
 
     render(<Dashboard {...defaultProps} results={[failedResult]} />)
 
-    // 失败时显示错误信息，但不显示应用按钮
     expect(screen.getByText('连接超时')).toBeInTheDocument()
     expect(screen.queryByText('9999ms')).not.toBeInTheDocument()
-    expect(screen.queryByText('应用')).not.toBeInTheDocument()
-  })
-
-  it('does not show apply button for use_original results', () => {
-    const useOriginalResult: EndpointResult = {
-      endpoint: mockEndpoints[0],
-      ip: '5.6.7.8',
-      latency: 100,
-      ttfb: 100,
-      success: true,
-      original_ip: '5.6.7.8',
-      original_latency: 100,
-      speedup_percent: 0,
-      use_original: true,
-    }
-
-    render(<Dashboard {...defaultProps} results={[useOriginalResult]} />)
-
-    // When use_original is true, the apply button should not be shown
-    expect(screen.queryByText('应用')).not.toBeInTheDocument()
+    // No bind button for failed results
+    expect(screen.queryByTitle('绑定到 hosts')).not.toBeInTheDocument()
   })
 
   it('updates binding count display', () => {
     render(<Dashboard {...defaultProps} bindingCount={5} />)
 
-    // Find the binding count card value
     expect(screen.getByText('5')).toBeInTheDocument()
-  })
-
-  // WorkingIndicator integration tests in Dashboard
-  // Requirement 5.4: Dashboard 在状态栏区域显示当前工作状态文字提示
-  it('renders WorkingIndicator in status bar when not working', () => {
-    render(<Dashboard {...defaultProps} isWorking={false} />)
-
-    // WorkingIndicator should be present and show stopped state
-    expect(screen.getByTestId('working-indicator')).toBeInTheDocument()
-    expect(screen.getByText('已停止')).toBeInTheDocument()
-  })
-
-  it('renders WorkingIndicator in status bar when working', () => {
-    render(<Dashboard {...defaultProps} isWorking={true} />)
-
-    // WorkingIndicator should be present and show working state
-    expect(screen.getByTestId('working-indicator')).toBeInTheDocument()
-    expect(screen.getByText('工作中')).toBeInTheDocument()
-  })
-
-  it('WorkingIndicator shows binding count in Dashboard', () => {
-    render(<Dashboard {...defaultProps} isWorking={true} bindingCount={3} />)
-
-    // WorkingIndicator should show binding count
-    expect(screen.getByText('(3 绑定)')).toBeInTheDocument()
-  })
-
-  it('WorkingIndicator updates when isWorking changes', () => {
-    const { rerender } = render(<Dashboard {...defaultProps} isWorking={false} />)
-    
-    expect(screen.getByText('已停止')).toBeInTheDocument()
-    
-    rerender(<Dashboard {...defaultProps} isWorking={true} />)
-    
-    expect(screen.getByText('工作中')).toBeInTheDocument()
   })
 })

@@ -18,12 +18,11 @@ pub mod client;
 
 use config::ConfigManager;
 use endpoint_tester::{estimate_test_timeout, EndpointTester};
-use health_checker::{HealthChecker, HealthStatus};
+use health_checker::BaselineTracker;
 use history::HistoryManager;
 use hosts_manager::HostsBinding;
 use models::{
     AppConfig, Endpoint, EndpointResult, HistoryRecord, HistoryStats, PermissionStatus, UpdateInfo,
-    WorkflowResult,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,19 +30,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State, WindowEvent,
+    Manager, State, WindowEvent,
 };
 use tokio::sync::Mutex;
-use tokio_util::sync::CancellationToken;
 
 pub struct AppState {
     config_manager: ConfigManager,
     history_manager: HistoryManager,
     tester: Arc<Mutex<Option<EndpointTester>>>,
     results: Arc<Mutex<Vec<EndpointResult>>>,
-    // 自动模式相关
-    health_checker: Arc<Mutex<HealthChecker>>,
-    auto_mode_token: Arc<Mutex<Option<CancellationToken>>>,
+    baselines: BaselineTracker,
 }
 
 /// 从端点 URL 中提取目标域名
@@ -120,7 +116,7 @@ async fn start_speed_test(
 
     let update_baseline = update_baseline.unwrap_or(true);
 
-    let tester = EndpointTester::new(vec![]);
+    let tester = EndpointTester::new(vec![], config.test_count);
 
     // 保存 tester 以便取消
     {
@@ -153,11 +149,7 @@ async fn start_speed_test(
     }
 
     if update_baseline {
-        // 更新基准延迟（避免长时间持有 health_checker 锁）
-        let baselines = {
-            let checker = state.health_checker.lock().await;
-            checker.get_baselines_arc()
-        }; // health_checker 锁在此释放
+        let baselines = state.baselines.get_baselines_arc();
 
         let best_by_domain = collect_best_success_by_domain(&results);
         let mut b = baselines.lock().await;
@@ -190,10 +182,7 @@ async fn apply_endpoint(
 ) -> Result<(), String> {
     if hosts_ops::read_binding(&domain).as_deref() == Some(ip.as_str()) {
         if let Some(latency) = latency {
-            let baselines = {
-                let checker = state.health_checker.lock().await;
-                checker.get_baselines_arc()
-            };
+            let baselines = state.baselines.get_baselines_arc();
             let mut b = baselines.lock().await;
             b.insert(domain, latency);
         }
@@ -203,10 +192,7 @@ async fn apply_endpoint(
     hosts_ops::write_binding(&domain, &ip).map_err(|e| e.to_string())?;
     hosts_ops::flush_dns().map_err(|e| e.to_string())?;
     if let Some(latency) = latency {
-        let baselines = {
-            let checker = state.health_checker.lock().await;
-            checker.get_baselines_arc()
-        };
+        let baselines = state.baselines.get_baselines_arc();
         let mut b = baselines.lock().await;
         b.insert(domain.clone(), latency);
     }
@@ -223,11 +209,8 @@ async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> 
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
-    // 获取 baselines arc（避免长时间持有 health_checker 锁）
-    let baselines = {
-        let checker = state.health_checker.lock().await;
-        checker.get_baselines_arc()
-    }; // health_checker 锁在此释放
+    // 获取 baselines arc
+    let baselines = state.baselines.get_baselines_arc();
 
     // 收集所有成功的端点绑定（按 domain 去重，取最优结果）
     let best_by_domain = collect_best_success_by_domain(&results);
@@ -482,78 +465,29 @@ async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
     state.history_manager.clear_all().map_err(|e| e.to_string())
 }
 
-// ===== 自动模式命令 =====
+// ===== 单端点解绑命令 =====
 
+/// 解绑单个端点的 hosts 绑定
 #[tauri::command]
-async fn start_auto_mode(state: State<'_, AppState>, app_handle: AppHandle) -> Result<(), String> {
-    let config = state.config_manager.load().map_err(|e| e.to_string())?;
-
-    // 原子检查并设置（单次锁操作避免竞态条件）
-    let cancel_token = {
-        let mut token = state.auto_mode_token.lock().await;
-        if token.is_some() {
-            return Err("自动模式已在运行".into());
-        }
-        let new_token = CancellationToken::new();
-        *token = Some(new_token.clone());
-        new_token
-    };
-
-    // 克隆需要的数据
-    let checker = state.health_checker.clone();
-    let config_clone = config.clone();
-    let auto_mode_token = state.auto_mode_token.clone();
-
-    // 启动后台任务
-    tauri::async_runtime::spawn(async move {
-        // 重置 health_checker 的取消令牌
-        {
-            let mut checker_guard = checker.lock().await;
-            checker_guard.reset_cancel_token();
-        }
-
-        // start() 是同步的，在内部 spawn 任务
-        {
-            let checker_guard = checker.lock().await;
-            checker_guard.start(app_handle, config_clone);
-        }
-
-        // 等待取消信号
-        cancel_token.cancelled().await;
-
-        // 任务结束时清除 auto_mode_token
-        {
-            let mut token = auto_mode_token.lock().await;
-            *token = None;
-        }
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-async fn stop_auto_mode(state: State<'_, AppState>) -> Result<(), String> {
-    let mut token = state.auto_mode_token.lock().await;
-    if let Some(t) = token.take() {
-        t.cancel();
-
-        // 同时取消 health_checker 的令牌
-        let checker = state.health_checker.lock().await;
-        checker.get_cancel_token().cancel();
+async fn unbind_endpoint(domain: String) -> Result<(), String> {
+    if hosts_ops::read_binding(&domain).is_none() {
+        return Ok(()); // 没有绑定，无需操作
     }
+    hosts_ops::clear_binding(&domain).map_err(|e| e.to_string())?;
+    hosts_ops::flush_dns().map_err(|e| e.to_string())?;
     Ok(())
 }
 
+/// 检查是否有活跃的 hosts 绑定
 #[tauri::command]
-async fn get_auto_mode_status(state: State<'_, AppState>) -> Result<HealthStatus, String> {
-    let checker = state.health_checker.lock().await;
-    Ok(checker.get_status().await)
-}
-
-#[tauri::command]
-async fn is_auto_mode_running(state: State<'_, AppState>) -> Result<bool, String> {
-    let token = state.auto_mode_token.lock().await;
-    Ok(token.is_some())
+async fn has_any_bindings(state: State<'_, AppState>) -> Result<bool, String> {
+    let config = state.config_manager.load().map_err(|e| e.to_string())?;
+    for endpoint in &config.endpoints {
+        if hosts_ops::read_binding(&endpoint.domain).is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 // ===== 单端点测速命令 =====
@@ -564,7 +498,8 @@ async fn test_single_endpoint(
     state: State<'_, AppState>,
     endpoint: Endpoint,
 ) -> Result<EndpointResult, String> {
-    let tester = EndpointTester::new(vec![]);
+    let config = state.config_manager.load().map_err(|e| e.to_string())?;
+    let tester = EndpointTester::new(vec![], config.test_count);
 
     // 使用 30 秒超时防止永久卡住
     let result = match tokio::time::timeout(
@@ -594,10 +529,7 @@ async fn test_single_endpoint(
 
     // 如果测速成功，更新基准延迟
     if result.success {
-        let baselines = {
-            let checker = state.health_checker.lock().await;
-            checker.get_baselines_arc()
-        };
+        let baselines = state.baselines.get_baselines_arc();
         let mut b = baselines.lock().await;
         b.insert(endpoint.domain.clone(), result.latency);
     }
@@ -605,229 +537,7 @@ async fn test_single_endpoint(
     Ok(result)
 }
 
-// ===== 简化工作流命令 =====
-
-/// 启动工作流：测速 + 应用 + 启动健康检查
-/// Requirements: 3.1, 3.2, 3.3
-#[tauri::command]
-async fn start_workflow(
-    state: State<'_, AppState>,
-    app_handle: AppHandle,
-) -> Result<WorkflowResult, String> {
-    // Step 1: 加载配置并获取启用的端点 (Requirement 3.1)
-    let config = state.config_manager.load().map_err(|e| e.to_string())?;
-    let endpoints: Vec<Endpoint> = config
-        .endpoints
-        .iter()
-        .filter(|e| e.enabled)
-        .cloned()
-        .collect();
-
-    if endpoints.is_empty() {
-        return Err("没有启用的端点".into());
-    }
-
-    let test_count = endpoints.len() as u32;
-
-    // Step 2: 执行测速 (Requirement 3.1)
-    let tester = EndpointTester::new(vec![]);
-
-    // 保存 tester 以便取消
-    {
-        let mut t = state.tester.lock().await;
-        *t = Some(tester.clone());
-    }
-
-    // 使用全局超时（60秒）防止永久卡住
-    let test_future = tester.test_all(&endpoints);
-    let results = match tokio::time::timeout(std::time::Duration::from_secs(60), test_future).await
-    {
-        Ok(results) => results,
-        Err(_) => {
-            // 超时，取消测试
-            tester.cancel();
-            // 清除 tester
-            let mut t = state.tester.lock().await;
-            *t = None;
-            return Err("测速超时（60秒），请检查网络连接".into());
-        }
-    };
-
-    // 清除 tester
-    {
-        let mut t = state.tester.lock().await;
-        *t = None;
-    }
-
-    // 更新基准延迟
-    let baselines = {
-        let checker = state.health_checker.lock().await;
-        checker.get_baselines_arc()
-    };
-    let best_by_domain = collect_best_success_by_domain(&results);
-    {
-        let mut b = baselines.lock().await;
-        for (domain, (_, latency)) in &best_by_domain {
-            b.insert(domain.clone(), *latency);
-        }
-    }
-
-    // 保存结果到状态
-    {
-        let mut state_results = state.results.lock().await;
-        *state_results = results.clone();
-    }
-
-    // Step 3: 智能应用 - 稳定性优先策略 (Requirement 3.2)
-    // 如果当前绑定的 IP 仍然可用，保持不变，避免不必要的 DNS 刷新中断连接
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    let mut bindings: Vec<HostsBinding> = Vec::with_capacity(best_by_domain.len());
-    let mut history_records: Vec<HistoryRecord> = Vec::new();
-    let mut success_count = 0u32;
-    let mut kept_count = 0u32; // 因当前绑定可用而保持不变的域名数
-
-    for r in results.iter().filter(|r| r.success) {
-        success_count += 1;
-
-        // 记录历史
-        history_records.push(HistoryRecord {
-            timestamp: now,
-            domain: extract_target_domain(&r.endpoint),
-            original_latency: r.original_latency,
-            optimized_latency: r.latency,
-            speedup_percent: r.speedup_percent,
-            applied: true,
-        });
-    }
-
-    for (domain, (ip, _latency)) in &best_by_domain {
-        let current_binding = hosts_ops::read_binding(domain);
-
-        match current_binding {
-            Some(ref current_ip) if current_ip != ip => {
-                // 当前绑定 IP 与新最优 IP 不同，验证当前 IP 是否仍可用
-                if let Some(endpoint) = endpoints.iter().find(|e| e.domain == *domain) {
-                    let validation = tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
-                        tester.test_ip(endpoint, current_ip.clone()),
-                    )
-                    .await;
-
-                    match validation {
-                        Ok(result) if result.success => {
-                            // 当前 IP 仍然可用，保持稳定不替换
-                            kept_count += 1;
-                            continue;
-                        }
-                        _ => {
-                            // 当前 IP 已失效或测试超时，替换为新最优 IP
-                            bindings.push(HostsBinding {
-                                domain: domain.clone(),
-                                ip: ip.clone(),
-                            });
-                        }
-                    }
-                } else {
-                    // 找不到对应端点配置，直接替换
-                    bindings.push(HostsBinding {
-                        domain: domain.clone(),
-                        ip: ip.clone(),
-                    });
-                }
-            }
-            Some(_) => {
-                // IP 相同，无需更新
-            }
-            None => {
-                // 无绑定，应用新 IP
-                bindings.push(HostsBinding {
-                    domain: domain.clone(),
-                    ip: ip.clone(),
-                });
-            }
-        }
-    }
-    // 最终安全过滤：移除与 hosts 文件完全相同的绑定
-    bindings = filter_changed_bindings(bindings);
-
-    // 保存历史记录
-    if let Err(e) = state.history_manager.add_records(history_records) {
-        eprintln!("Failed to save history: {}", e);
-    }
-
-    // 应用绑定
-    let applied_count = if !bindings.is_empty() {
-        let count = hosts_ops::write_bindings_batch(&bindings).map_err(|e| e.to_string())?;
-        hosts_ops::flush_dns().map_err(|e| e.to_string())?;
-        count as u32
-    } else {
-        0
-    };
-
-    // Step 4: 启动健康检查任务 (Requirement 3.3)
-    // 检查是否已有运行中的健康检查任务
-    let already_running = {
-        let token = state.auto_mode_token.lock().await;
-        token.is_some()
-    };
-
-    if !already_running && success_count > 0 {
-        let cancel_token = CancellationToken::new();
-        {
-            let mut token = state.auto_mode_token.lock().await;
-            *token = Some(cancel_token.clone());
-        }
-
-        // 克隆需要的数据
-        let checker = state.health_checker.clone();
-        let config_clone = config.clone();
-        let auto_mode_token = state.auto_mode_token.clone();
-
-        // 启动后台健康检查任务
-        tauri::async_runtime::spawn(async move {
-            // 重置 health_checker 的取消令牌
-            {
-                let mut checker_guard = checker.lock().await;
-                checker_guard.reset_cancel_token();
-            }
-
-            // start() 是同步的，在内部 spawn 任务
-            {
-                let checker_guard = checker.lock().await;
-                checker_guard.start(app_handle, config_clone);
-            }
-
-            // 等待取消信号
-            cancel_token.cancelled().await;
-
-            // 任务结束时清除 auto_mode_token
-            {
-                let mut token = auto_mode_token.lock().await;
-                *token = None;
-            }
-        });
-    }
-
-    Ok(WorkflowResult {
-        test_count,
-        success_count,
-        applied_count,
-        kept_count,
-        results,
-    })
-}
-
-/// 获取工作流状态
-/// Requirements: 5.4
-#[tauri::command]
-async fn is_workflow_running(state: State<'_, AppState>) -> Result<bool, String> {
-    let token = state.auto_mode_token.lock().await;
-    Ok(token.is_some())
-}
+// ===== 获取当前测速结果 =====
 
 /// 获取当前测速结果
 /// 用于程序启动时恢复已有的测速数据
@@ -835,34 +545,6 @@ async fn is_workflow_running(state: State<'_, AppState>) -> Result<bool, String>
 async fn get_current_results(state: State<'_, AppState>) -> Result<Vec<EndpointResult>, String> {
     let results = state.results.lock().await;
     Ok(results.clone())
-}
-
-/// 停止工作流：停止健康检查 + 清除 hosts
-/// Requirements: 4.1, 4.2, 4.3
-#[tauri::command]
-async fn stop_workflow(state: State<'_, AppState>) -> Result<u32, String> {
-    // Step 1: 停止健康检查任务 (Requirement 4.1)
-    {
-        let mut token = state.auto_mode_token.lock().await;
-        if let Some(t) = token.take() {
-            t.cancel();
-
-            // 同时取消 health_checker 的令牌
-            let checker = state.health_checker.lock().await;
-            checker.get_cancel_token().cancel();
-        }
-    }
-
-    // Step 2: 清除所有 anyFAST 管理的 hosts 绑定 (Requirement 4.2)
-    // 使用 clear_all_anyfast_bindings 清除整个 anyFAST 块，
-    // 而不是只清除当前配置中的域名，这样可以确保清除所有历史绑定
-    let count = hosts_ops::clear_all_anyfast_bindings().map_err(|e| e.to_string())?;
-
-    // Step 3: 刷新 DNS 缓存 (Requirement 4.3)
-    // 即使没有清除任何绑定，也刷新 DNS 以确保状态一致
-    hosts_ops::flush_dns().map_err(|e| e.to_string())?;
-
-    Ok(count as u32)
 }
 
 // 当前版本号（从 tauri.conf.json 读取，通过 build.rs 设置）
@@ -1096,8 +778,7 @@ pub fn run() {
                 history_manager: HistoryManager::new(),
                 tester: Arc::new(Mutex::new(None)),
                 results: Arc::new(Mutex::new(Vec::new())),
-                health_checker: Arc::new(Mutex::new(HealthChecker::new(config_manager.clone()))),
-                auto_mode_token: Arc::new(Mutex::new(None)),
+                baselines: BaselineTracker::new(),
             };
             app.manage(state);
 
@@ -1122,9 +803,7 @@ pub fn run() {
                             }
                         }
                         "quit" => {
-                            // 退出前始终清除 hosts（强制行为）
-                            let _ = hosts_ops::clear_all_anyfast_bindings();
-                            let _ = hosts_ops::flush_dns();
+                            // 退出时保留 hosts 绑定，用户可通过解绑功能手动清除
                             app.exit(0);
                         }
                         _ => {}
@@ -1173,6 +852,8 @@ pub fn run() {
             apply_endpoint,
             apply_all_endpoints,
             clear_all_bindings,
+            unbind_endpoint,
+            has_any_bindings,
             get_bindings,
             get_binding_count,
             check_admin,
@@ -1186,17 +867,8 @@ pub fn run() {
             open_hosts_file,
             get_history_stats,
             clear_history,
-            // 自动模式
-            start_auto_mode,
-            stop_auto_mode,
-            get_auto_mode_status,
-            is_auto_mode_running,
             // 单端点测速
             test_single_endpoint,
-            // 简化工作流
-            start_workflow,
-            stop_workflow,
-            is_workflow_running,
             get_current_results,
             // 开机自启动
             set_autostart,

@@ -12,25 +12,15 @@ export interface EndpointResult {
   ttfb: number
   success: boolean
   error?: string
-  // 新增字段: 加速百分比显示 + 智能回退
   original_ip: string
   original_latency: number
   speedup_percent: number
   use_original: boolean
 }
 
-// 工作流结果 - 启动工作流后返回的统计信息
-export interface WorkflowResult {
-  testCount: number           // 测试的端点数
-  successCount: number        // 成功的端点数
-  appliedCount: number        // 应用的绑定数
-  keptCount: number           // 因当前绑定仍可用而保持不变的域名数
-  results: EndpointResult[]   // 详细测试结果
-}
-
 export interface AppConfig {
   endpoints: Endpoint[]
-  autostart: boolean          // 开机自启动
+  autostart: boolean
 }
 
 export interface Progress {
@@ -47,58 +37,19 @@ export interface LogEntry {
 
 // 历史记录模型
 export interface HistoryRecord {
-  timestamp: number           // Unix 时间戳（秒）
+  timestamp: number
   domain: string
-  original_latency: number    // 原始延迟 (ms)
-  optimized_latency: number   // 优化后延迟 (ms)
-  speedup_percent: number     // 加速百分比
-  applied: boolean            // 是否应用了优化
+  original_latency: number
+  optimized_latency: number
+  speedup_percent: number
+  applied: boolean
 }
 
 export interface HistoryStats {
-  total_tests: number         // 总测试次数
-  total_speedup_ms: number    // 累计节省时间 (ms)
-  avg_speedup_percent: number // 平均加速百分比
-  records: HistoryRecord[]    // 最近记录
-}
-
-// ===== 自动模式相关类型 =====
-
-export interface HealthStatus {
-  is_running: boolean
-  last_check: number | null   // Unix 时间戳
-  check_count: number
-  switch_count: number
-  endpoints_status: EndpointHealth[]
-}
-
-export interface EndpointHealth {
-  domain: string
-  current_ip: string | null
-  best_ip: string | null       // 当前最优 IP
-  best_latency: number         // 最优 IP 的延迟
-  latency: number
-  baseline_latency: number
-  consecutive_failures: number
-  is_healthy: boolean
-  recommend_retest?: boolean
-}
-
-export interface CheckResult {
-  endpoints_health: EndpointHealth[]
-  needs_switch: Endpoint[]
-}
-
-export interface SwitchResult {
-  switched_count: number
-  switched: SwitchedEndpoint[]
-}
-
-export interface SwitchedEndpoint {
-  domain: string
-  old_ip: string | null
-  new_ip: string
-  new_latency: number
+  total_tests: number
+  total_speedup_ms: number
+  avg_speedup_percent: number
+  records: HistoryRecord[]
 }
 
 // ===== Service 相关类型 =====
