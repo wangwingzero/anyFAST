@@ -133,7 +133,6 @@ pub struct UpdateInfo {
     pub published_at: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default = "default_check_interval")]
