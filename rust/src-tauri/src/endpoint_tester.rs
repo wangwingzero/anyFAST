@@ -151,7 +151,7 @@ pub async fn fetch_online_cf_ips() -> Vec<String> {
                     Ok(text) => {
                         // Support both comma-separated and newline-separated formats
                         let ips: Vec<String> = text
-                            .split(|c: char| c == ',' || c == '\n' || c == '\r')
+                            .split([',', '\n', '\r'])
                             .map(|s| s.trim().to_string())
                             .filter(|s| !s.is_empty() && !s.starts_with('#'))
                             .collect();
