@@ -1,6 +1,8 @@
 import { useState } from 'react'
-import { CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink } from 'lucide-react'
-import { Endpoint, EndpointResult, Progress } from '../types'
+import { CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-shell'
+import { Endpoint, EndpointResult, Progress, AppConfig } from '../types'
 
 // 可复制文本组件
 function CopyableText({ text, className }: { text: string; className?: string }) {
@@ -39,6 +41,7 @@ interface DashboardProps {
   progress: Progress
   bindingCount: number
   testingDomains: Set<string>
+  config: AppConfig | null
   onApply: (result: EndpointResult) => void
   onApplyAll: () => void
   onUnbindAll: () => void
@@ -47,6 +50,7 @@ interface DashboardProps {
   onTestSingle: (endpoint: Endpoint) => void
   onEndpointsChange?: (endpoints: Endpoint[]) => void
   onSaveConfig?: (endpoints: Endpoint[]) => void
+  onConfigChange?: (config: AppConfig) => void
 }
 
 export function Dashboard({
@@ -56,6 +60,7 @@ export function Dashboard({
   progress: _progress,
   bindingCount,
   testingDomains,
+  config,
   onApply,
   onApplyAll,
   onUnbindAll,
@@ -64,10 +69,15 @@ export function Dashboard({
   onTestSingle,
   onEndpointsChange,
   onSaveConfig,
+  onConfigChange,
 }: DashboardProps) {
   const [showAddForm, setShowAddForm] = useState(false)
   const [newUrl, setNewUrl] = useState('')
   const [newName, setNewName] = useState('')
+  const [showPreferredIps, setShowPreferredIps] = useState(false)
+  const [preferredIpsText, setPreferredIpsText] = useState('')
+  const [savingPreferredIps, setSavingPreferredIps] = useState(false)
+  const [showNoIpsWarning, setShowNoIpsWarning] = useState(false)
 
   const testedCount = results.length
   const availableCount = results.filter((r) => r.success).length
@@ -109,6 +119,48 @@ export function Dashboard({
     onSaveConfig?.(newEndpoints)
   }
 
+  const parsePreferredIps = (raw: string): string[] =>
+    raw
+      .split(/[\s,;]+/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+
+  const openPreferredIps = () => {
+    setPreferredIpsText((config?.preferred_ips ?? []).join('\n'))
+    setShowPreferredIps(true)
+  }
+
+  const savePreferredIps = async () => {
+    if (!config) return
+    const preferredIps = parsePreferredIps(preferredIpsText)
+    const newConfig: AppConfig = {
+      ...config,
+      preferred_ips: preferredIps,
+    }
+
+    setSavingPreferredIps(true)
+    try {
+      await invoke('save_config', { config: newConfig })
+      onConfigChange?.(newConfig)
+      setPreferredIpsText(preferredIps.join('\n'))
+      setShowPreferredIps(false)
+    } catch (e) {
+      console.error('Save preferred IPs failed:', e)
+    } finally {
+      setSavingPreferredIps(false)
+    }
+  }
+
+  const hasPreferredIps = (config?.preferred_ips ?? []).length > 0
+
+  const handleRetest = () => {
+    if (!hasPreferredIps) {
+      setShowNoIpsWarning(true)
+      return
+    }
+    onRetest()
+  }
+
   return (
     <div className="h-full flex flex-col p-4 lg:p-6 overflow-y-auto">
       {/* Header */}
@@ -126,9 +178,24 @@ export function Dashboard({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 优选 IP */}
+          <button
+            onClick={openPreferredIps}
+            className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl transition-colors ${
+              hasPreferredIps
+                ? 'bg-apple-green/10 text-apple-green hover:bg-apple-green/20'
+                : 'bg-apple-orange/10 text-apple-orange hover:bg-apple-orange/20'
+            }`}
+          >
+            <ListFilter className="w-4 h-4" />
+            优选 IP
+            {hasPreferredIps && (
+              <span className="text-xs opacity-70">({config!.preferred_ips.length})</span>
+            )}
+          </button>
           {/* 全局测速 */}
           <button
-            onClick={onRetest}
+            onClick={handleRetest}
             disabled={enabledCount === 0 || isRunning}
             className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl bg-apple-blue/10 text-apple-blue hover:bg-apple-blue/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -297,6 +364,97 @@ export function Dashboard({
           )}
         </div>
       </div>
+
+      {/* 优选 IP 弹窗 */}
+      {showPreferredIps && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-5 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <ListFilter className="w-5 h-5 text-apple-blue" />
+                <h3 className="text-base font-semibold text-apple-gray-600">优选 IP 白名单</h3>
+              </div>
+              <button
+                onClick={() => setShowPreferredIps(false)}
+                className="p-1 hover:bg-apple-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-4 h-4 text-apple-gray-400" />
+              </button>
+            </div>
+            <p className="text-xs text-apple-gray-400 mb-3">
+              每行一个 IP，或用空格/逗号/分号分隔。设置后测速将只从这些 IP 中选最优。留空则自动使用系统优选。
+            </p>
+            <textarea
+              value={preferredIpsText}
+              onChange={(e) => setPreferredIpsText(e.target.value)}
+              placeholder={'104.26.13.202\n104.26.12.202'}
+              rows={5}
+              className="w-full px-3 py-2 text-sm font-mono bg-apple-gray-50 border border-apple-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-apple-blue/30 resize-y mb-3"
+            />
+            <div className="flex items-center justify-between mb-3">
+              <button
+                onClick={() => open('https://github.com/XIU2/CloudflareSpeedTest/releases').catch(console.error)}
+                className="flex items-center gap-1.5 text-xs text-apple-gray-400 hover:text-apple-blue transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                下载优选 IP 工具
+              </button>
+              <div className="flex gap-2">
+              <button
+                onClick={() => setShowPreferredIps(false)}
+                className="px-4 py-2 text-sm font-medium rounded-xl bg-apple-gray-100 text-apple-gray-600 hover:bg-apple-gray-200 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={savePreferredIps}
+                disabled={savingPreferredIps || !config}
+                className="px-4 py-2 text-sm font-medium rounded-xl bg-apple-blue text-white hover:bg-apple-blue/90 transition-colors disabled:opacity-50"
+              >
+                {savingPreferredIps ? '保存中...' : '保存'}
+              </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 未设置优选 IP 警告弹窗 */}
+      {showNoIpsWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-apple-orange/10 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-apple-orange" />
+              </div>
+              <h3 className="text-base font-semibold text-apple-gray-600">未设置优选 IP</h3>
+            </div>
+            <p className="text-sm text-apple-gray-500 mb-4">
+              建议先设置优选 IP 白名单，测速将从白名单中选最快的 IP。未设置时使用自动优选，结果可能不稳定。
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  setShowNoIpsWarning(false)
+                  openPreferredIps()
+                }}
+                className="w-full px-4 py-2 text-sm font-medium rounded-xl bg-apple-blue text-white hover:bg-apple-blue/90 transition-colors"
+              >
+                去设置优选 IP
+              </button>
+              <button
+                onClick={() => {
+                  setShowNoIpsWarning(false)
+                  onRetest()
+                }}
+                className="w-full px-4 py-2 text-sm font-medium rounded-xl bg-apple-gray-100 text-apple-gray-600 hover:bg-apple-gray-200 transition-colors"
+              >
+                跳过，直接测速
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )

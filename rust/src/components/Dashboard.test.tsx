@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Dashboard } from './Dashboard'
-import type { Endpoint, EndpointResult, Progress } from '../types'
+import type { Endpoint, EndpointResult, Progress, AppConfig } from '../types'
 
 describe('Dashboard', () => {
   const mockEndpoints: Endpoint[] = [
@@ -40,6 +40,12 @@ describe('Dashboard', () => {
     message: '就绪',
   }
 
+  const mockConfig: AppConfig = {
+    endpoints: mockEndpoints,
+    autostart: false,
+    preferred_ips: [],
+  }
+
   const defaultProps = {
     endpoints: mockEndpoints,
     results: [] as EndpointResult[],
@@ -47,6 +53,7 @@ describe('Dashboard', () => {
     progress: mockProgress,
     bindingCount: 0,
     testingDomains: new Set<string>(),
+    config: mockConfig,
     onApply: vi.fn(),
     onApplyAll: vi.fn(),
     onUnbindAll: vi.fn(),
@@ -110,7 +117,8 @@ describe('Dashboard', () => {
 
   it('calls onRetest when clicking global 测速 button', () => {
     const onRetest = vi.fn()
-    render(<Dashboard {...defaultProps} onRetest={onRetest} />)
+    const configWithIps = { ...mockConfig, preferred_ips: ['1.2.3.4'] }
+    render(<Dashboard {...defaultProps} config={configWithIps} onRetest={onRetest} />)
 
     // 全局测速按钮是第一个包含"测速"文本的按钮
     const retestButtons = screen.getAllByText('测速')

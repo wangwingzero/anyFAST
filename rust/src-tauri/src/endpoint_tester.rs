@@ -56,8 +56,8 @@ const DEFAULT_CF_IPS: &[&str] = &[
     "162.159.0.1",
 ];
 
-/// Online API for fetching optimized Cloudflare IPs
-const IPDB_API_URL: &str = "https://ipdb.api.030101.xyz/?type=bestcf";
+/// Online API for fetching optimized Cloudflare IPs (cf-speed-dns project)
+const IPDB_API_URL: &str = "https://ip.164746.xyz/ipTop10.html";
 
 /// Max number of candidate IPs for each endpoint
 const MAX_TEST_IPS: usize = 15;
@@ -132,9 +132,9 @@ fn merge_candidate_ips(cf_ips: Vec<String>, dns_ips: &[String], limit: usize) ->
 }
 
 /// Fetch optimized Cloudflare IPs from online API
-/// Returns IPs from IPDB API, falls back to default IPs on failure
+/// Returns IPs from cf-speed-dns, falls back to default IPs on failure
 pub async fn fetch_online_cf_ips() -> Vec<String> {
-    info_log!("从 IPDB API 获取优选 IP...");
+    info_log!("从在线 API 获取优选 IP...");
 
     let client = match Client::builder().timeout(Duration::from_secs(10)).build() {
         Ok(c) => c,
@@ -149,32 +149,33 @@ pub async fn fetch_online_cf_ips() -> Vec<String> {
             if resp.status().is_success() {
                 match resp.text().await {
                     Ok(text) => {
+                        // Support both comma-separated and newline-separated formats
                         let ips: Vec<String> = text
-                            .lines()
-                            .map(|line| line.trim().to_string())
-                            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                            .split(|c: char| c == ',' || c == '\n' || c == '\r')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty() && !s.starts_with('#'))
                             .collect();
 
                         if ips.is_empty() {
-                            warn_log!("IPDB API 返回空列表，使用默认 IP");
+                            warn_log!("在线 API 返回空列表，使用默认 IP");
                             DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
                         } else {
-                            info_log!("从 IPDB API 获取到 {} 个优选 IP", ips.len());
+                            info_log!("从在线 API 获取到 {} 个优选 IP", ips.len());
                             ips
                         }
                     }
                     Err(e) => {
-                        warn_log!("读取 IPDB API 响应失败: {}, 使用默认 IP", e);
+                        warn_log!("读取在线 API 响应失败: {}, 使用默认 IP", e);
                         DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
                     }
                 }
             } else {
-                warn_log!("IPDB API 返回状态码 {}, 使用默认 IP", resp.status());
+                warn_log!("在线 API 返回状态码 {}, 使用默认 IP", resp.status());
                 DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
             }
         }
         Err(e) => {
-            warn_log!("请求 IPDB API 失败: {}, 使用默认 IP", e);
+            warn_log!("请求在线 API 失败: {}, 使用默认 IP", e);
             DEFAULT_CF_IPS.iter().map(|s| s.to_string()).collect()
         }
     }
@@ -518,8 +519,14 @@ impl EndpointTester {
 
         // Collect IPs to test
         let test_ips: Vec<String> = if is_cf {
-            let cf_ips = self.get_cf_ips().await;
-            merge_candidate_ips(cf_ips, &dns_ips, MAX_TEST_IPS)
+            if !self.custom_cf_ips.is_empty() {
+                // User set preferred IP whitelist — use ONLY those, don't merge with DNS
+                debug_log!("  使用用户白名单 IP，不合并 DNS IP");
+                self.custom_cf_ips.to_vec()
+            } else {
+                let cf_ips = self.get_cf_ips().await;
+                merge_candidate_ips(cf_ips, &dns_ips, MAX_TEST_IPS)
+            }
         } else {
             dns_ips.clone()
         };

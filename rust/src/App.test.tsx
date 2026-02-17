@@ -145,6 +145,12 @@ describe('App', () => {
     const retestButtons = screen.getAllByText('测速')
     fireEvent.click(retestButtons[0])
 
+    // No preferred IPs set, so a warning dialog appears
+    await waitFor(() => {
+      expect(screen.getByText('跳过，直接测速')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByText('跳过，直接测速'))
+
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('start_speed_test', expect.anything())
     }, { timeout: 5000 })

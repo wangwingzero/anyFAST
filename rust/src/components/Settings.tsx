@@ -48,15 +48,12 @@ export function Settings({
   // 自启动状态
   const [autostart, setAutostart] = useState(config?.autostart ?? false)
   const [autostartLoading, setAutostartLoading] = useState(false)
-  const [preferredIpsText, setPreferredIpsText] = useState('')
-  const [savingPreferredIps, setSavingPreferredIps] = useState(false)
 
   const initializedRef = useRef(false)
 
   // 初始化
   useEffect(() => {
     if (!config) return
-    setPreferredIpsText((config.preferred_ips ?? []).join('\n'))
     if (!initializedRef.current) {
       initializedRef.current = true
     }
@@ -182,35 +179,8 @@ export function Settings({
     try {
       await invoke('save_config', { config: newConfig })
       onConfigChange(newConfig)
-      setPreferredIpsText('')
     } catch (e) {
       console.error('Restore defaults failed:', e)
-    }
-  }
-
-  const parsePreferredIps = (raw: string): string[] =>
-    raw
-      .split(/[\s,;]+/)
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0)
-
-  const savePreferredIps = async () => {
-    if (!config) return
-    const preferredIps = parsePreferredIps(preferredIpsText)
-    const newConfig: AppConfig = {
-      ...config,
-      preferred_ips: preferredIps,
-    }
-
-    setSavingPreferredIps(true)
-    try {
-      await invoke('save_config', { config: newConfig })
-      onConfigChange(newConfig)
-      setPreferredIpsText(preferredIps.join('\n'))
-    } catch (e) {
-      console.error('Save preferred IPs failed:', e)
-    } finally {
-      setSavingPreferredIps(false)
     }
   }
 
@@ -272,31 +242,6 @@ export function Settings({
                 <ExternalLink className="w-4 h-4" />
                 打开
               </button>
-            </div>
-
-            <div className="p-3 bg-apple-gray-50 rounded-xl">
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div>
-                  <span className="text-sm text-apple-gray-600">优选 IP 白名单</span>
-                  <p className="text-xs text-apple-gray-400 mt-0.5">
-                    每行一个 IP，或用空格/逗号/分号分隔。留空则自动使用系统优选 IP。
-                  </p>
-                </div>
-                <button
-                  onClick={savePreferredIps}
-                  disabled={savingPreferredIps || !config}
-                  className="px-3 py-1.5 bg-apple-blue text-white text-sm font-medium rounded-xl hover:bg-apple-blue/90 transition-colors disabled:opacity-50"
-                >
-                  {savingPreferredIps ? '保存中...' : '保存'}
-                </button>
-              </div>
-              <textarea
-                value={preferredIpsText}
-                onChange={(e) => setPreferredIpsText(e.target.value)}
-                placeholder={'104.26.13.202\n104.26.12.202'}
-                rows={4}
-                className="w-full px-3 py-2 text-sm font-mono bg-white border border-apple-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-apple-blue/30 resize-y"
-              />
             </div>
           </div>
         </Section>

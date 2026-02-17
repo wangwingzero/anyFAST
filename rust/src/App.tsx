@@ -566,6 +566,7 @@ function App() {
             progress={progress}
             bindingCount={bindingCount}
             testingDomains={testingDomains}
+            config={config}
             onApply={applyEndpoint}
             onApplyAll={applyAll}
             onUnbindAll={unbindAll}
@@ -574,6 +575,7 @@ function App() {
             onTestSingle={testSingleEndpoint}
             onEndpointsChange={setEndpoints}
             onSaveConfig={saveConfigWithEndpoints}
+            onConfigChange={setConfig}
           />
         )}
         {currentView === 'history' && <HistoryView />}

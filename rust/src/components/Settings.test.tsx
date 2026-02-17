@@ -142,26 +142,4 @@ describe('Settings', () => {
       expect(invoke).toHaveBeenCalledWith('save_config', expect.any(Object))
     })
   })
-
-  it('saves preferred ip list', async () => {
-    const { invoke } = await import('@tauri-apps/api/core')
-    vi.mocked(invoke).mockResolvedValue(undefined)
-
-    render(<Settings {...defaultProps} />)
-
-    const input = screen.getByRole('textbox')
-    fireEvent.change(input, { target: { value: '1.1.1.1, 2.2.2.2' } })
-    fireEvent.click(screen.getByText('保存'))
-
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith(
-        'save_config',
-        expect.objectContaining({
-          config: expect.objectContaining({
-            preferred_ips: ['1.1.1.1', '2.2.2.2'],
-          }),
-        }),
-      )
-    })
-  })
 })
