@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink } from 'lucide-react'
+import { CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 import { Endpoint, EndpointResult, Progress, AppConfig } from '../types'
+import { ImportEndpointsDialog } from './ImportEndpointsDialog'
 
 // 可复制文本组件
 function CopyableText({ text, className }: { text: string; className?: string }) {
@@ -78,6 +79,7 @@ export function Dashboard({
   const [preferredIpsText, setPreferredIpsText] = useState('')
   const [savingPreferredIps, setSavingPreferredIps] = useState(false)
   const [showNoIpsWarning, setShowNoIpsWarning] = useState(false)
+  const [showImportDialog, setShowImportDialog] = useState(false)
 
   const testedCount = results.length
   const availableCount = results.filter((r) => r.success).length
@@ -159,6 +161,14 @@ export function Dashboard({
       return
     }
     onRetest()
+  }
+
+  const handleImportEndpoints = (newEndpoints: Endpoint[]) => {
+    if (!onEndpointsChange) return
+    const merged = [...endpoints, ...newEndpoints]
+    onEndpointsChange(merged)
+    onSaveConfig?.(merged)
+    setShowImportDialog(false)
   }
 
   return (
@@ -290,6 +300,13 @@ export function Dashboard({
             >
               <Plus className="w-3 h-3" />
               添加
+            </button>
+            <button
+              onClick={() => setShowImportDialog(true)}
+              className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg bg-apple-green/10 text-apple-green hover:bg-apple-green/20 transition-colors"
+            >
+              <Download className="w-3 h-3" />
+              导入
             </button>
           </div>
         </div>
@@ -455,6 +472,14 @@ export function Dashboard({
           </div>
         </div>
       )}
+
+      {/* 批量导入对话框 */}
+      <ImportEndpointsDialog
+        open={showImportDialog}
+        onClose={() => setShowImportDialog(false)}
+        existingEndpoints={endpoints}
+        onImport={handleImportEndpoints}
+      />
 
     </div>
   )

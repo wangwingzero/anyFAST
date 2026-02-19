@@ -1,5 +1,6 @@
 export { Sidebar } from './Sidebar'
 export { Dashboard } from './Dashboard'
+export { ImportEndpointsDialog } from './ImportEndpointsDialog'
 export { Settings } from './Settings'
 export { Logs } from './Logs'
 export { HistoryView } from './HistoryView'
