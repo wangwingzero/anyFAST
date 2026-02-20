@@ -800,18 +800,14 @@ async fn install_and_start_service() -> Result<String, String> {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         // Find anyfast-service.exe next to the main executable
-        let exe_path =
-            std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
+        let exe_path = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
         let exe_dir = exe_path
             .parent()
             .ok_or_else(|| "无法获取程序所在目录".to_string())?;
         let service_exe = exe_dir.join("anyfast-service.exe");
 
         if !service_exe.exists() {
-            return Err(format!(
-                "未找到服务程序: {}",
-                service_exe.display()
-            ));
+            return Err(format!("未找到服务程序: {}", service_exe.display()));
         }
 
         let service_path = service_exe.to_string_lossy().to_string();
@@ -850,11 +846,7 @@ async fn install_and_start_service() -> Result<String, String> {
         if !create_output.status.success() {
             let stderr = String::from_utf8_lossy(&create_output.stderr);
             let stdout = String::from_utf8_lossy(&create_output.stdout);
-            return Err(format!(
-                "创建服务失败: {} {}",
-                stdout.trim(),
-                stderr.trim()
-            ));
+            return Err(format!("创建服务失败: {} {}", stdout.trim(), stderr.trim()));
         }
         log.push_str("服务创建成功\n");
 
@@ -946,9 +938,8 @@ async fn fetch_preferred_ips(url: String) -> Result<Vec<String>, String> {
     let mut seen = std::collections::HashSet::new();
 
     // Match IPv4 pattern: x.x.x.x where each octet is 0-255
-    let ip_pattern = regex_lite::Regex::new(
-        r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b"
-    ).map_err(|e| format!("正则编译失败: {}", e))?;
+    let ip_pattern = regex_lite::Regex::new(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
+        .map_err(|e| format!("正则编译失败: {}", e))?;
 
     for cap in ip_pattern.captures_iter(&html) {
         let ip_str = cap.get(1).unwrap().as_str();
