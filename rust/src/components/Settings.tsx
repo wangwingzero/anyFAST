@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2 } from 'lucide-react'
+import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2, Github, Star, AlertCircle } from 'lucide-react'
 import { Endpoint, AppConfig } from '../types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
@@ -263,6 +263,33 @@ export function Settings({
                 <RefreshCw className={`w-4 h-4 ${checkingUpdate ? 'animate-spin' : ''}`} />
                 {checkingUpdate ? '检查中...' : '检查更新'}
               </button>
+            </div>
+
+            {/* GitHub 仓库 */}
+            <div className="flex items-center justify-between p-3 bg-apple-gray-50 rounded-xl">
+              <div className="flex items-center gap-2.5 flex-1 min-w-0 mr-3">
+                <Github className="w-4 h-4 text-apple-gray-500 flex-shrink-0" />
+                <div>
+                  <span className="text-sm text-apple-gray-600">GitHub 仓库</span>
+                  <p className="text-xs text-apple-gray-400 mt-0.5">wangwingzero/anyFAST</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => open('https://github.com/wangwingzero/anyFAST/issues')}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-apple-gray-500 text-xs font-medium rounded-lg hover:bg-apple-gray-200 transition-colors"
+                >
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Issue
+                </button>
+                <button
+                  onClick={() => open('https://github.com/wangwingzero/anyFAST')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-gray-800 text-white text-xs font-medium rounded-lg hover:bg-apple-gray-700 transition-colors"
+                >
+                  <Star className="w-3.5 h-3.5" />
+                  Star
+                </button>
+              </div>
             </div>
 
             {/* 更新错误 */}

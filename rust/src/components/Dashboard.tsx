@@ -453,6 +453,13 @@ export function Dashboard({
               </button>
               <div className="flex gap-2">
               <button
+                onClick={() => setPreferredIpsText('')}
+                disabled={!preferredIpsText.trim()}
+                className="px-4 py-2 text-sm font-medium rounded-xl bg-red-50 text-red-500 hover:bg-red-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                清空
+              </button>
+              <button
                 onClick={() => setShowPreferredIps(false)}
                 className="px-4 py-2 text-sm font-medium rounded-xl bg-apple-gray-100 text-apple-gray-600 hover:bg-apple-gray-200 transition-colors"
               >
