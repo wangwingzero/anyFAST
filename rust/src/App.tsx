@@ -41,6 +41,8 @@ function App() {
   const [userDeclinedAdmin, setUserDeclinedAdmin] = useState(false)
   const [, setHasPermission] = useState<boolean | null>(null)
   const [isInstallingHelper, setIsInstallingHelper] = useState(false)
+  const [isInstallingService, setIsInstallingService] = useState(false)
+  const [isRunningAsAdmin, setIsRunningAsAdmin] = useState(false)
   const [hasBundledHelper, setHasBundledHelper] = useState(false)
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
   const [testingDomains, setTestingDomains] = useState<Set<string>>(new Set())
@@ -113,6 +115,31 @@ function App() {
     }
   }
 
+  const installWindowsService = async () => {
+    try {
+      setIsInstallingService(true)
+      addLog('info', '正在安装 anyFAST Service...')
+      const result = await invoke<string>('install_and_start_service')
+      addLog('success', `Service 安装成功: ${result}`)
+      showToast('success', 'Service 安装并启动成功')
+
+      // Refresh and check
+      await invoke('refresh_service_status')
+      const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
+      if (status.hasPermission) {
+        setShowAdminDialog(false)
+        setHasPermission(true)
+        setSidebarRefreshTrigger(prev => prev + 1)
+      }
+    } catch (e) {
+      const errorStr = String(e)
+      addLog('error', `Service 安装失败: ${errorStr}`)
+      showToast('error', `安装失败: ${errorStr}`)
+    } finally {
+      setIsInstallingService(false)
+    }
+  }
+
   const declineAdmin = useCallback(() => {
     setUserDeclinedAdmin(true)
     setShowAdminDialog(false)
@@ -148,6 +175,35 @@ function App() {
 
         if (attempt < maxAttempts && !isMacOS) {
           await sleepMs(400 * attempt)
+        }
+      }
+
+      // Windows: check if running as admin (for showing install-service option)
+      if (!isMacOS) {
+        try {
+          const adminStatus = await invoke<boolean>('check_admin')
+          setIsRunningAsAdmin(adminStatus)
+
+          // Auto-try installing service if running as admin but service not available
+          if (adminStatus && !lastStatus.isUsingService) {
+            addLog('info', '以管理员身份运行但 Service 未安装，正在自动安装...')
+            try {
+              await invoke<string>('install_and_start_service')
+              await sleepMs(500)
+              await invoke('refresh_service_status')
+              const newStatus = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
+              if (newStatus.hasPermission) {
+                setHasPermission(true)
+                addLog('success', 'Service 自动安装并启动成功')
+                setSidebarRefreshTrigger(prev => prev + 1)
+                return true
+              }
+            } catch (e) {
+              addLog('warning', `Service 自动安装失败: ${e}`)
+            }
+          }
+        } catch {
+          // ignore
         }
       }
 
@@ -456,22 +512,35 @@ function App() {
               </div>
             ) : (
               <div className="mb-4">
-                <p className="text-sm text-gray-600 mb-3">
-                  修改 hosts 文件需要管理员授权。建议按下面顺序尝试：
-                </p>
-                <ul className="text-sm text-gray-600 space-y-2 ml-4">
-                  <li className="flex items-start gap-2">
-                    <span className="text-gray-400 mt-0.5">•</span>
-                    <span>先点"仅重试连接"（适用于刚启动/刚安装）</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-gray-400 mt-0.5">•</span>
-                    <span>仍失败，再点"一键授权并重启"（会弹出系统授权窗口）</span>
-                  </li>
-                </ul>
-                <p className="text-xs text-gray-500 mt-3">
-                  仍无法连接可能是旧版本或安全软件拦截，请尝试重新安装最新版。
-                </p>
+                {isRunningAsAdmin ? (
+                  <>
+                    <p className="text-sm text-gray-600 mb-3">
+                      当前已以管理员身份运行，但 Service 未安装或未启动。点击下方按钮安装并启动 Service：
+                    </p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      安装后 Service 将以系统权限运行，无需每次以管理员启动。
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-600 mb-3">
+                      修改 hosts 文件需要管理员授权。建议按下面顺序尝试：
+                    </p>
+                    <ul className="text-sm text-gray-600 space-y-2 ml-4">
+                      <li className="flex items-start gap-2">
+                        <span className="text-gray-400 mt-0.5">•</span>
+                        <span>先点"仅重试连接"（适用于刚启动/刚安装）</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-gray-400 mt-0.5">•</span>
+                        <span>仍失败，再点"一键授权并重启"（会安装 Service 并重启）</span>
+                      </li>
+                    </ul>
+                    <p className="text-xs text-gray-500 mt-3">
+                      仍无法连接可能是安全软件拦截，请尝试重新安装最新版或手动安装 Service。
+                    </p>
+                  </>
+                )}
               </div>
             )}
 
@@ -514,35 +583,85 @@ function App() {
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                <div className="flex flex-col gap-1">
-                  <button
-                    onClick={restartAsAdmin}
-                    className="w-full px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors flex items-center justify-center gap-2"
-                  >
-                    一键授权并重启
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20">推荐</span>
-                  </button>
-                  <p className="text-[11px] text-gray-500 text-center">会弹出系统授权窗口并重启应用</p>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <button
-                    onClick={async () => {
-                      await invoke('refresh_service_status')
-                      const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
-                      if (status.hasPermission) {
-                        setShowAdminDialog(false)
-                        setHasPermission(true)
-                        addLog('success', '已连接到 anyFAST Service')
-                      } else {
-                        addLog('warning', 'Service 仍未连接，请稍后重试')
-                      }
-                    }}
-                    className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors"
-                  >
-                    仅重试连接
-                  </button>
-                  <p className="text-[11px] text-gray-500 text-center">适用于刚启动/刚安装</p>
-                </div>
+                {isRunningAsAdmin ? (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={installWindowsService}
+                        disabled={isInstallingService}
+                        className="w-full px-4 py-2.5 text-sm font-medium text-white bg-apple-blue rounded-xl hover:bg-blue-600 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isInstallingService ? (
+                          <>
+                            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            安装中...
+                          </>
+                        ) : (
+                          <>
+                            安装 Service
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20">推荐</span>
+                          </>
+                        )}
+                      </button>
+                      <p className="text-[11px] text-gray-500 text-center">安装后无需每次以管理员启动</p>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={async () => {
+                          await invoke('refresh_service_status')
+                          const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
+                          if (status.hasPermission) {
+                            setShowAdminDialog(false)
+                            setHasPermission(true)
+                            addLog('success', '已连接到 anyFAST Service')
+                            setSidebarRefreshTrigger(prev => prev + 1)
+                          } else {
+                            addLog('warning', 'Service 仍未连接，请尝试安装 Service')
+                          }
+                        }}
+                        className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors"
+                      >
+                        仅重试连接
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={restartAsAdmin}
+                        className="w-full px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-xl hover:bg-orange-600 transition-colors flex items-center justify-center gap-2"
+                      >
+                        一键授权并重启
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20">推荐</span>
+                      </button>
+                      <p className="text-[11px] text-gray-500 text-center">会弹出系统授权窗口并重启应用</p>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={async () => {
+                          await invoke('refresh_service_status')
+                          const status = await invoke<{ hasPermission: boolean; isUsingService: boolean }>('get_permission_status')
+                          if (status.hasPermission) {
+                            setShowAdminDialog(false)
+                            setHasPermission(true)
+                            addLog('success', '已连接到 anyFAST Service')
+                            setSidebarRefreshTrigger(prev => prev + 1)
+                          } else {
+                            addLog('warning', 'Service 仍未连接，请稍后重试')
+                          }
+                        }}
+                        className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors"
+                      >
+                        仅重试连接
+                      </button>
+                      <p className="text-[11px] text-gray-500 text-center">适用于刚启动/刚安装</p>
+                    </div>
+                  </>
+                )}
                 <button
                   onClick={declineAdmin}
                   className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"

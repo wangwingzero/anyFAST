@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download } from 'lucide-react'
+import { CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download, CloudDownload } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 import { Endpoint, EndpointResult, Progress, AppConfig } from '../types'
@@ -78,6 +78,7 @@ export function Dashboard({
   const [showPreferredIps, setShowPreferredIps] = useState(false)
   const [preferredIpsText, setPreferredIpsText] = useState('')
   const [savingPreferredIps, setSavingPreferredIps] = useState(false)
+  const [fetchingIps, setFetchingIps] = useState(false)
   const [showNoIpsWarning, setShowNoIpsWarning] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
 
@@ -154,6 +155,23 @@ export function Dashboard({
   }
 
   const hasPreferredIps = (config?.preferred_ips ?? []).length > 0
+
+  const fetchPreferredIps = async () => {
+    try {
+      setFetchingIps(true)
+      const ips = await invoke<string[]>('fetch_preferred_ips', { url: 'https://ip.164746.xyz/' })
+      if (ips.length > 0) {
+        // Merge with existing IPs (dedup)
+        const existing = parsePreferredIps(preferredIpsText)
+        const merged = [...new Set([...ips, ...existing])]
+        setPreferredIpsText(merged.join('\n'))
+      }
+    } catch (e) {
+      console.error('Fetch preferred IPs failed:', e)
+    } finally {
+      setFetchingIps(false)
+    }
+  }
 
   const handleRetest = () => {
     if (!hasPreferredIps) {
@@ -401,6 +419,23 @@ export function Dashboard({
             <p className="text-xs text-apple-gray-400 mb-3">
               每行一个 IP，或用空格/逗号/分号分隔。设置后测速将只从这些 IP 中选最优。留空则自动使用系统优选。
             </p>
+            <button
+              onClick={fetchPreferredIps}
+              disabled={fetchingIps}
+              className="w-full mb-3 px-4 py-2.5 text-sm font-medium rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:from-blue-600 hover:to-cyan-600 transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+            >
+              {fetchingIps ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  正在获取...
+                </>
+              ) : (
+                <>
+                  <CloudDownload className="w-4 h-4" />
+                  一键获取优选 IP
+                </>
+              )}
+            </button>
             <textarea
               value={preferredIpsText}
               onChange={(e) => setPreferredIpsText(e.target.value)}

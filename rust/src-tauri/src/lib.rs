@@ -789,6 +789,202 @@ async fn restart_as_admin() -> Result<(), String> {
     }
 }
 
+/// Install and start the Windows service (requires admin privileges)
+/// This finds anyfast-service.exe next to the main exe, registers it as a
+/// Windows service, and starts it.
+#[tauri::command]
+async fn install_and_start_service() -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        // Find anyfast-service.exe next to the main executable
+        let exe_path =
+            std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
+        let exe_dir = exe_path
+            .parent()
+            .ok_or_else(|| "无法获取程序所在目录".to_string())?;
+        let service_exe = exe_dir.join("anyfast-service.exe");
+
+        if !service_exe.exists() {
+            return Err(format!(
+                "未找到服务程序: {}",
+                service_exe.display()
+            ));
+        }
+
+        let service_path = service_exe.to_string_lossy().to_string();
+        let mut log = String::new();
+
+        // Step 1: Stop existing service (ignore errors)
+        let _ = std::process::Command::new(r"C:\Windows\System32\sc.exe")
+            .args(["stop", "anyfast-service"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        log.push_str("已尝试停止旧服务\n");
+
+        // Brief wait for service to stop
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+
+        // Step 2: Delete existing service (ignore errors)
+        let _ = std::process::Command::new(r"C:\Windows\System32\sc.exe")
+            .args(["delete", "anyfast-service"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        log.push_str("已尝试删除旧服务\n");
+
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+
+        // Step 3: Create new service
+        let bin_path_arg = format!("binPath= \"{}\"", service_path);
+        let create_output = std::process::Command::new(r"C:\Windows\System32\sc.exe")
+            .raw_arg("create anyfast-service")
+            .raw_arg(&bin_path_arg)
+            .raw_arg("start= auto")
+            .raw_arg("DisplayName= \"anyFAST Hosts Service\"")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("执行 sc create 失败: {}", e))?;
+
+        if !create_output.status.success() {
+            let stderr = String::from_utf8_lossy(&create_output.stderr);
+            let stdout = String::from_utf8_lossy(&create_output.stdout);
+            return Err(format!(
+                "创建服务失败: {} {}",
+                stdout.trim(),
+                stderr.trim()
+            ));
+        }
+        log.push_str("服务创建成功\n");
+
+        // Step 4: Set description
+        let _ = std::process::Command::new(r"C:\Windows\System32\sc.exe")
+            .args([
+                "description",
+                "anyfast-service",
+                "Manages hosts file for anyFAST network optimization tool",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        // Step 5: Configure recovery (restart on failure)
+        let _ = std::process::Command::new(r"C:\Windows\System32\sc.exe")
+            .args([
+                "failure",
+                "anyfast-service",
+                "reset=",
+                "60",
+                "actions=",
+                "restart/5000/restart/5000/restart/5000",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        // Step 6: Start the service
+        let start_output = std::process::Command::new(r"C:\Windows\System32\sc.exe")
+            .args(["start", "anyfast-service"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("执行 sc start 失败: {}", e))?;
+
+        if !start_output.status.success() {
+            let stderr = String::from_utf8_lossy(&start_output.stderr);
+            let stdout = String::from_utf8_lossy(&start_output.stdout);
+            log.push_str(&format!(
+                "服务启动失败: {} {}\n",
+                stdout.trim(),
+                stderr.trim()
+            ));
+            // Service was created but couldn't start - still partial success
+            return Err(format!(
+                "服务已安装但启动失败: {} {}",
+                stdout.trim(),
+                stderr.trim()
+            ));
+        }
+        log.push_str("服务启动成功\n");
+
+        // Step 7: Refresh service status cache
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        hosts_ops::refresh_service_status();
+
+        Ok(log)
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err("此功能仅在 Windows 上可用".to_string())
+    }
+}
+
+/// Fetch preferred IPs from a remote URL (e.g., ip.164746.xyz)
+/// Parses the HTML page and extracts IP addresses from table cells
+#[tauri::command]
+async fn fetch_preferred_ips(url: String) -> Result<Vec<String>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .header("User-Agent", "anyFAST/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {}", e))?;
+
+    let html = response
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
+
+    // Extract IPs using regex pattern matching on the HTML
+    // Look for IPv4 addresses in the content
+    let mut ips = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Match IPv4 pattern: x.x.x.x where each octet is 0-255
+    let ip_pattern = regex_lite::Regex::new(
+        r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b"
+    ).map_err(|e| format!("正则编译失败: {}", e))?;
+
+    for cap in ip_pattern.captures_iter(&html) {
+        let ip_str = cap.get(1).unwrap().as_str();
+        // Validate it's a real IP (not version numbers etc.)
+        if let Ok(ip) = ip_str.parse::<IpAddr>() {
+            let ip_string = ip.to_string();
+            // Skip loopback, private ranges (192.168.x.x, 10.x.x.x, etc.)
+            if !ip.is_loopback() && !is_private_ip(&ip) && seen.insert(ip_string.clone()) {
+                ips.push(ip_string);
+            }
+        }
+    }
+
+    if ips.is_empty() {
+        return Err("未从页面中解析到有效的公网 IP 地址".to_string());
+    }
+
+    Ok(ips)
+}
+
+/// Check if an IP is in a private range
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            // 10.0.0.0/8
+            octets[0] == 10
+            // 172.16.0.0/12
+            || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+            // 192.168.0.0/16
+            || (octets[0] == 192 && octets[1] == 168)
+        }
+        IpAddr::V6(_) => false,
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -900,6 +1096,8 @@ pub fn run() {
             get_autostart,
             // 权限
             restart_as_admin,
+            install_and_start_service,
+            fetch_preferred_ips,
             // 更新检查
             check_for_update,
             get_current_version,

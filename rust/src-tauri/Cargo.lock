@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "anyfast"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "ctrlc",
@@ -51,6 +51,7 @@ dependencies = [
  "fs2",
  "hickory-resolver",
  "libc",
+ "regex-lite",
  "reqwest 0.12.28",
  "rustls",
  "serde",
@@ -3049,6 +3050,12 @@ dependencies = [
  "memchr",
  "regex-syntax",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"

@@ -47,6 +47,7 @@ directories = "5"
 thiserror = "2"
 chrono = "0.4"
 fs2 = "0.4"
+regex-lite = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
