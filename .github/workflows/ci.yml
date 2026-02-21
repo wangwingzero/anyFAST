@@ -47,6 +47,29 @@ jobs:
         working-directory: rust/src-tauri
         run: cargo test --verbose
 
+  # Check for unreleased commits on main
+  check-unreleased:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for unreleased commits
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No tags found, skipping check"
+            exit 0
+          fi
+          COUNT=$(git rev-list --count "$LATEST_TAG"..HEAD)
+          if [ "$COUNT" -gt 0 ]; then
+            echo "::warning::⚠️ main 分支有 $COUNT 个 commit 尚未发版（最新 tag: $LATEST_TAG）"
+            echo "未发布的 commit:"
+            git log --oneline "$LATEST_TAG"..HEAD
+          fi
+
   # Rust linting
   rust-lint:
     runs-on: ubuntu-latest
