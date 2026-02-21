@@ -1,6 +1,6 @@
 {
   "name": "anyrouter",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "anyFAST - 中转站端点优选工具",
   "type": "module",
   "scripts": {
