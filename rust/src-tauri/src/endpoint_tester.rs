@@ -518,15 +518,13 @@ impl EndpointTester {
         }
 
         // Collect IPs to test
-        let test_ips: Vec<String> = if is_cf {
-            if !self.custom_cf_ips.is_empty() {
-                // User set preferred IP whitelist — use ONLY those, don't merge with DNS
-                debug_log!("  使用用户白名单 IP，不合并 DNS IP");
-                self.custom_cf_ips.to_vec()
-            } else {
-                let cf_ips = self.get_cf_ips().await;
-                merge_candidate_ips(cf_ips, &dns_ips, MAX_TEST_IPS)
-            }
+        // User-configured preferred IPs take highest priority regardless of CF detection
+        let test_ips: Vec<String> = if !self.custom_cf_ips.is_empty() {
+            debug_log!("  使用用户白名单 IP（优先级最高），不合并 DNS IP");
+            self.custom_cf_ips.to_vec()
+        } else if is_cf {
+            let cf_ips = self.get_cf_ips().await;
+            merge_candidate_ips(cf_ips, &dns_ips, MAX_TEST_IPS)
         } else {
             dns_ips.clone()
         };

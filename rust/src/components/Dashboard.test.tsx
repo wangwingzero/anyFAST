@@ -217,7 +217,7 @@ describe('Dashboard', () => {
   it('shows speedup percentage for optimized results', () => {
     render(<Dashboard {...defaultProps} results={mockResults} />)
 
-    const speedupBadges = screen.getAllByText(/↑ 50%/)
+    const speedupBadges = screen.getAllByText(/↑50%/)
     expect(speedupBadges).toHaveLength(2)
   })
 

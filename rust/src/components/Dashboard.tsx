@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CheckCircle2, Zap, Globe, Link2, TrendingUp, TrendingDown, Minus, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download, CloudDownload } from 'lucide-react'
+import { CheckCircle2, Zap, Globe, Link2, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download, CloudDownload } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 import { Endpoint, EndpointResult, Progress, AppConfig } from '../types'
@@ -265,13 +265,12 @@ export function Dashboard({
         {/* Table Container with horizontal scroll */}
         <div className="flex-1 overflow-auto min-h-0">
           {/* Table Header */}
-          <div className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_120px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
+          <div className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_minmax(140px,180px)_90px_120px] lg:grid-cols-[40px_1fr_1fr_minmax(180px,220px)_120px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
             <span>#</span>
             <span>名称</span>
             <span>域名</span>
+            <span>延迟对比</span>
             <span>IP</span>
-            <span>延迟</span>
-            <span className="hidden sm:block">加速效果</span>
             <span>操作</span>
           </div>
 
@@ -557,6 +556,79 @@ function CompactStatus({
   )
 }
 
+// 延迟对比组件：展示原始延迟 → 优化延迟 [加速百分比]
+function LatencyComparison({ result, isTesting }: { result: EndpointResult; isTesting?: boolean }) {
+  if (isTesting) {
+    return (
+      <span className="text-apple-gray-400 text-xs flex items-center gap-1">
+        <Loader2 className="w-3.5 h-3.5 animate-spin text-apple-blue" />
+      </span>
+    )
+  }
+
+  if (!result.success) {
+    return (
+      <span className="text-xs lg:text-sm font-medium text-apple-red">
+        {result.error || '失败'}
+      </span>
+    )
+  }
+
+  const latency = result.latency || 0
+  const latencyColor =
+    latency < 200
+      ? 'text-apple-green'
+      : latency < 500
+        ? 'text-apple-gray-600'
+        : latency < 1000
+          ? 'text-apple-orange'
+          : 'text-apple-red'
+
+  const hasOriginal = result.original_latency > 0
+  const speedup = result.speedup_percent
+
+  // 无原始延迟数据时仅显示当前延迟
+  if (!hasOriginal) {
+    return (
+      <span className={`text-xs lg:text-sm font-semibold ${latencyColor}`}>
+        {latency > 0 ? `${latency.toFixed(0)}ms` : '-'}
+      </span>
+    )
+  }
+
+  const originalMs = result.original_latency.toFixed(0)
+  const optimizedMs = latency.toFixed(0)
+
+  return (
+    <span className="flex items-center gap-1.5 text-xs lg:text-sm flex-wrap">
+      {/* 原始延迟 */}
+      {speedup > 0 ? (
+        <span className="text-apple-gray-400 line-through">{originalMs}ms</span>
+      ) : (
+        <span className="text-apple-gray-500">{originalMs}ms</span>
+      )}
+      {/* 箭头 */}
+      <span className="text-apple-gray-300">→</span>
+      {/* 优化延迟 */}
+      <span className={`font-semibold ${latencyColor}`}>{optimizedMs}ms</span>
+      {/* 加速/减速百分比徽章 */}
+      {speedup > 0 ? (
+        <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-md bg-apple-green/10 text-apple-green text-xs font-medium">
+          ↑{speedup.toFixed(0)}%
+        </span>
+      ) : speedup < 0 ? (
+        <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-md bg-apple-orange/10 text-apple-orange text-xs font-medium">
+          ↓{Math.abs(speedup).toFixed(0)}%
+        </span>
+      ) : (
+        <span className="inline-flex items-center px-1.5 py-0 rounded-md bg-apple-gray-200 text-apple-gray-500 text-xs font-medium">
+          0%
+        </span>
+      )}
+    </span>
+  )
+}
+
 function ResultRow({
   rank,
   endpoint,
@@ -579,14 +651,12 @@ function ResultRow({
   bindingCount?: number
 }) {
   const displayIp = result?.ip || '-'
-  const displayLatency = result?.latency
-  const showFailure = !!result && !result.success
 
   // 未测试状态
   if (!result) {
     return (
       <div
-        className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_120px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 bg-apple-gray-50/50"
+        className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_minmax(140px,180px)_90px_120px] lg:grid-cols-[40px_1fr_1fr_minmax(180px,220px)_120px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 bg-apple-gray-50/50"
       >
         <span className="text-xs lg:text-sm text-apple-gray-300">{rank}</span>
         <span className="text-xs lg:text-sm font-medium text-apple-gray-400 truncate">
@@ -596,9 +666,8 @@ function ResultRow({
           text={endpoint.url}
           className="text-xs lg:text-sm text-apple-gray-300 font-mono"
         />
-        <span className="text-xs lg:text-sm text-apple-gray-300">-</span>
         <span className="text-xs lg:text-sm text-apple-gray-300">{isTesting ? '测速中...' : '待测试'}</span>
-        <span className="hidden sm:block text-xs lg:text-sm text-apple-gray-300">-</span>
+        <span className="text-xs lg:text-sm text-apple-gray-300">-</span>
         <div>
           <div className="flex items-center gap-1">
             {onTestSingle && (
@@ -633,60 +702,9 @@ function ResultRow({
     )
   }
 
-  const latency = displayLatency || 0
-  const latencyColor = showFailure
-    ? 'text-apple-red'
-    : latency > 0
-      ? latency < 200
-        ? 'text-apple-green'
-        : latency < 500
-          ? 'text-apple-gray-600'
-          : latency < 1000
-            ? 'text-apple-orange'
-            : 'text-apple-red'
-      : 'text-apple-red'
-
-  // 加速效果显示
-  const renderSpeedupBadge = () => {
-    if (!result?.success) return null
-
-    if (!result.original_latency || result.original_latency <= 0) {
-      return <span className="text-apple-gray-400 text-xs">-</span>
-    }
-
-    if (result.speedup_percent > 0) {
-      return (
-        <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-green/10 text-apple-green text-xs"
-          title={`原始延迟: ${result.original_latency.toFixed(0)}ms → 优化延迟: ${result.latency.toFixed(0)}ms`}
-        >
-          <TrendingUp className="w-3 h-3" />
-          ↑ {result.speedup_percent.toFixed(0)}%
-        </span>
-      )
-    } else if (result.speedup_percent < 0) {
-      return (
-        <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-orange/10 text-apple-orange text-xs"
-          title={`原始延迟: ${result.original_latency.toFixed(0)}ms → 当前延迟: ${result.latency.toFixed(0)}ms`}
-        >
-          <TrendingDown className="w-3 h-3" />
-          ↓ {Math.abs(result.speedup_percent).toFixed(0)}%
-        </span>
-      )
-    } else {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-apple-gray-200 text-apple-gray-500 text-xs">
-          <Minus className="w-3 h-3" />
-          0%
-        </span>
-      )
-    }
-  }
-
   return (
     <div
-      className={`grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_90px_60px_80px_120px] lg:grid-cols-[40px_1fr_1fr_120px_80px_100px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors ${isTesting ? 'bg-apple-blue/5' : ''}`}
+      className={`grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_minmax(140px,180px)_90px_120px] lg:grid-cols-[40px_1fr_1fr_minmax(180px,220px)_120px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors ${isTesting ? 'bg-apple-blue/5' : ''}`}
     >
       <span className="text-xs lg:text-sm text-apple-gray-400">{rank}</span>
       <span className="text-xs lg:text-sm font-medium text-apple-gray-600 truncate">
@@ -696,19 +714,10 @@ function ResultRow({
         text={endpoint.url}
         className="text-xs lg:text-sm text-apple-gray-400 font-mono"
       />
+      <LatencyComparison result={result} isTesting={isTesting} />
       <span className="text-xs lg:text-sm font-mono text-apple-gray-400 truncate">
         {isTesting ? <span className="text-apple-gray-400">测速中...</span> : displayIp}
       </span>
-      <span className={`text-xs lg:text-sm font-medium ${isTesting ? 'text-apple-gray-400' : latencyColor}`}>
-        {isTesting
-          ? <Loader2 className="w-3.5 h-3.5 animate-spin text-apple-blue" />
-          : showFailure
-            ? (result?.error || '失败')
-            : (latency > 0 ? `${latency.toFixed(0)}ms` : '-')}
-      </span>
-      <div className="hidden sm:block">
-        {isTesting ? <span className="text-apple-gray-300 text-xs">-</span> : renderSpeedupBadge()}
-      </div>
       <div className="flex items-center gap-1">
         {onTestSingle && (
           <button
