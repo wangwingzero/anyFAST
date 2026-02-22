@@ -150,7 +150,11 @@ async fn start_speed_test(
             if elapsed < cooldown {
                 let wait = cooldown - elapsed;
                 drop(last); // 释放锁再 sleep
-                eprintln!("[COOLDOWN] 距上次测速仅 {:.1}s，等待 {:.1}s", elapsed.as_secs_f64(), wait.as_secs_f64());
+                eprintln!(
+                    "[COOLDOWN] 距上次测速仅 {:.1}s，等待 {:.1}s",
+                    elapsed.as_secs_f64(),
+                    wait.as_secs_f64()
+                );
                 tokio::time::sleep(wait).await;
             }
         }
@@ -1095,12 +1099,7 @@ async fn fetch_preferred_ips(url: String) -> Result<Vec<String>, String> {
         Ok(h) => h,
         Err(proxy_err) => {
             // Retry without proxy
-            match fetch_url_with_client(
-                reqwest::Client::builder().no_proxy(),
-                &url,
-            )
-            .await
-            {
+            match fetch_url_with_client(reqwest::Client::builder().no_proxy(), &url).await {
                 Ok(h) => h,
                 Err(direct_err) => {
                     return Err(format!(

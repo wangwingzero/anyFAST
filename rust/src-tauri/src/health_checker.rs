@@ -182,8 +182,9 @@ impl HealthChecker {
                 let ep_clone = ep.clone();
                 let current_ip_clone = current_ip.clone();
                 join_set.spawn(async move {
-                    let current_result =
-                        tester_clone.test_ip(&ep_clone, current_ip_clone.clone()).await;
+                    let current_result = tester_clone
+                        .test_ip(&ep_clone, current_ip_clone.clone())
+                        .await;
                     (ep_clone, current_ip_clone, current_result)
                 });
             }
@@ -304,8 +305,7 @@ impl HealthChecker {
                         if cur_lat <= 0.0 {
                             false
                         } else {
-                            let improvement_pct =
-                                (cur_lat - new_latency) / cur_lat * 100.0;
+                            let improvement_pct = (cur_lat - new_latency) / cur_lat * 100.0;
                             let improvement_abs = cur_lat - new_latency;
                             improvement_pct > 20.0 && improvement_abs > 50.0
                         }

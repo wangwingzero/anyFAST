@@ -395,7 +395,11 @@ impl EndpointTester {
             TestProgressEventType::TestStarted,
             "info",
             None,
-            format!("开始测速 {} 个端点 (并发 {})", endpoints.len(), max_concurrency),
+            format!(
+                "开始测速 {} 个端点 (并发 {})",
+                endpoints.len(),
+                max_concurrency
+            ),
         );
         let semaphore = Arc::new(Semaphore::new(max_concurrency));
         let mut join_set = JoinSet::new();
@@ -573,7 +577,11 @@ impl EndpointTester {
         };
         self.emit_progress(
             TestProgressEventType::TestFinished,
-            if success_count > 0 { "success" } else { "error" },
+            if success_count > 0 {
+                "success"
+            } else {
+                "error"
+            },
             None,
             finish_msg,
         );
@@ -648,7 +656,11 @@ impl EndpointTester {
                     TestProgressEventType::DnsFailed,
                     "error",
                     Some(&endpoint.name),
-                    format!("[{}] DNS 解析超时 ({}s)", endpoint.name, DNS_LOOKUP_TIMEOUT.as_secs()),
+                    format!(
+                        "[{}] DNS 解析超时 ({}s)",
+                        endpoint.name,
+                        DNS_LOOKUP_TIMEOUT.as_secs()
+                    ),
                 );
                 return EndpointResult::failure(endpoint.clone(), String::new(), "DNS超时".into());
             }
@@ -986,7 +998,11 @@ impl EndpointTester {
                 format!(
                     " (原 {:.0}ms, {}{}%)",
                     original_latency,
-                    if final_result.speedup_percent > 0.0 { "加速 " } else { "减速 " },
+                    if final_result.speedup_percent > 0.0 {
+                        "加速 "
+                    } else {
+                        "减速 "
+                    },
                     final_result.speedup_percent.abs() as i32
                 )
             } else {
@@ -998,10 +1014,7 @@ impl EndpointTester {
                 Some(&endpoint.name),
                 format!(
                     "[{}] 最优: {} {:.0}ms{}",
-                    endpoint.name,
-                    final_result.ip,
-                    final_result.latency,
-                    speedup_info
+                    endpoint.name, final_result.ip, final_result.latency, speedup_info
                 ),
             );
         } else {
