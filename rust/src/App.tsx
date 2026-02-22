@@ -7,7 +7,7 @@ import { Settings } from './components/Settings'
 import { Logs } from './components/Logs'
 import { HistoryView } from './components/HistoryView'
 import { ToastContainer, ToastData, ToastType } from './components'
-import { Endpoint, EndpointResult, AppConfig, LogEntry, OptimizationEvent } from './types'
+import { Endpoint, EndpointResult, AppConfig, LogEntry, OptimizationEvent, TestProgressEvent } from './types'
 
 type View = 'dashboard' | 'settings' | 'logs' | 'history'
 
@@ -276,6 +276,14 @@ function App() {
     })
     return () => { unlisten.then(fn => fn()) }
   }, [addLog, showToast, refreshBindingCount])
+
+  // 监听测速进度事件
+  useEffect(() => {
+    const unlisten = listen<TestProgressEvent>('test-progress', (event) => {
+      addLog(event.payload.level, event.payload.message)
+    })
+    return () => { unlisten.then(fn => fn()) }
+  }, [addLog])
 
   const initializeApp = async () => {
     await loadConfig()

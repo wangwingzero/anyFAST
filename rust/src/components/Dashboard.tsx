@@ -79,6 +79,7 @@ export function Dashboard({
   const [preferredIpsText, setPreferredIpsText] = useState('')
   const [savingPreferredIps, setSavingPreferredIps] = useState(false)
   const [fetchingIps, setFetchingIps] = useState(false)
+  const [fetchIpsError, setFetchIpsError] = useState<string | null>(null)
   const [showNoIpsWarning, setShowNoIpsWarning] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
 
@@ -159,15 +160,20 @@ export function Dashboard({
   const fetchPreferredIps = async () => {
     try {
       setFetchingIps(true)
+      setFetchIpsError(null)
       const ips = await invoke<string[]>('fetch_preferred_ips', { url: 'https://ip.164746.xyz/' })
       if (ips.length > 0) {
         // Merge with existing IPs (dedup)
         const existing = parsePreferredIps(preferredIpsText)
         const merged = [...new Set([...ips, ...existing])]
         setPreferredIpsText(merged.join('\n'))
+      } else {
+        setFetchIpsError('未获取到有效 IP')
       }
     } catch (e) {
-      console.error('Fetch preferred IPs failed:', e)
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('Fetch preferred IPs failed:', msg)
+      setFetchIpsError(`获取失败: ${msg}`)
     } finally {
       setFetchingIps(false)
     }
@@ -441,6 +447,9 @@ export function Dashboard({
                 </>
               )}
             </button>
+            {fetchIpsError && (
+              <p className="text-xs text-red-500 mb-2 px-1">{fetchIpsError}</p>
+            )}
             <textarea
               value={preferredIpsText}
               onChange={(e) => setPreferredIpsText(e.target.value)}

@@ -27,7 +27,8 @@ use models::{
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+#[cfg(feature = "tauri-runtime")]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -35,6 +36,7 @@ use tauri::{
 };
 use tokio::sync::Mutex;
 
+#[cfg(feature = "tauri-runtime")]
 pub struct AppState {
     config_manager: ConfigManager,
     history_manager: HistoryManager,
@@ -43,6 +45,8 @@ pub struct AppState {
     baselines: BaselineTracker,
     app_handle: AppHandle,
     health_checker: Arc<Mutex<Option<HealthChecker>>>,
+    /// 上次测速完成时间，用于连续测速冷却（防止快速重复触发 CF 风控）
+    last_test_time: Arc<Mutex<Option<Instant>>>,
 }
 
 /// 从端点 URL 中提取目标域名
@@ -114,11 +118,13 @@ fn normalize_preferred_ips(raw_ips: Vec<String>) -> Vec<String> {
     normalized
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
     state.config_manager.load().map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn save_config(state: State<'_, AppState>, config: AppConfig) -> Result<(), String> {
     let mut config = config;
@@ -129,11 +135,27 @@ async fn save_config(state: State<'_, AppState>, config: AppConfig) -> Result<()
         .map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn start_speed_test(
     state: State<'_, AppState>,
     update_baseline: Option<bool>,
 ) -> Result<Vec<EndpointResult>, String> {
+    // 连续测速冷却：距上次测速完成不足 3 秒时，自动等待补齐
+    {
+        let last = state.last_test_time.lock().await;
+        if let Some(t) = *last {
+            let elapsed = t.elapsed();
+            let cooldown = std::time::Duration::from_secs(3);
+            if elapsed < cooldown {
+                let wait = cooldown - elapsed;
+                drop(last); // 释放锁再 sleep
+                eprintln!("[COOLDOWN] 距上次测速仅 {:.1}s，等待 {:.1}s", elapsed.as_secs_f64(), wait.as_secs_f64());
+                tokio::time::sleep(wait).await;
+            }
+        }
+    }
+
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
     let endpoints: Vec<Endpoint> = config.endpoints.into_iter().filter(|e| e.enabled).collect();
 
@@ -143,7 +165,11 @@ async fn start_speed_test(
 
     let update_baseline = update_baseline.unwrap_or(true);
 
-    let tester = EndpointTester::new(config.preferred_ips.clone(), config.test_count);
+    let tester = EndpointTester::with_app_handle(
+        config.preferred_ips.clone(),
+        config.test_count,
+        Some(state.app_handle.clone()),
+    );
 
     // 保存 tester 以便取消
     {
@@ -188,9 +214,16 @@ async fn start_speed_test(
     let mut state_results = state.results.lock().await;
     *state_results = results.clone();
 
+    // 记录测速完成时间（用于冷却计算）
+    {
+        let mut last = state.last_test_time.lock().await;
+        *last = Some(Instant::now());
+    }
+
     Ok(results)
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stop_speed_test(state: State<'_, AppState>) -> Result<(), String> {
     let mut tester = state.tester.lock().await;
@@ -200,6 +233,7 @@ async fn stop_speed_test(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn apply_endpoint(
     state: State<'_, AppState>,
@@ -226,6 +260,7 @@ async fn apply_endpoint(
     Ok(())
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> {
     // 尽早 clone 并释放 results 锁，避免长时间持有
@@ -317,6 +352,7 @@ async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> 
     Ok(count as u32)
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn clear_all_bindings(state: State<'_, AppState>) -> Result<u32, String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
@@ -347,6 +383,7 @@ async fn clear_all_bindings(state: State<'_, AppState>) -> Result<u32, String> {
     Ok(count as u32)
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn get_bindings(state: State<'_, AppState>) -> Result<Vec<(String, Option<String>)>, String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
@@ -360,6 +397,7 @@ async fn get_bindings(state: State<'_, AppState>) -> Result<Vec<(String, Option<
     Ok(bindings)
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn get_binding_count(state: State<'_, AppState>) -> Result<u32, String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
@@ -374,6 +412,7 @@ async fn get_binding_count(state: State<'_, AppState>) -> Result<u32, String> {
     Ok(count)
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 fn check_admin() -> bool {
     let (has_permission, _is_using_service) = hosts_ops::get_permission_status();
@@ -381,12 +420,14 @@ fn check_admin() -> bool {
 }
 
 /// Check if the hosts service is running
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 fn is_service_running() -> bool {
     hosts_ops::is_service_running()
 }
 
 /// Get permission status as a structured object
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 fn get_permission_status() -> PermissionStatus {
     let (has_permission, is_using_service) = hosts_ops::get_permission_status();
@@ -397,12 +438,14 @@ fn get_permission_status() -> PermissionStatus {
 }
 
 /// Refresh service status check
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 fn refresh_service_status() -> bool {
     hosts_ops::refresh_service_status()
 }
 
 /// Check if macOS helper is available
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 fn is_macos_helper_available() -> bool {
     hosts_ops::is_macos_helper_available()
@@ -410,6 +453,7 @@ fn is_macos_helper_available() -> bool {
 
 /// Install macOS helper with setuid bit using osascript (shows system password dialog)
 /// Returns Ok(true) if installation succeeded, Ok(false) if helper not found in bundle
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn install_macos_helper() -> Result<bool, String> {
     #[cfg(target_os = "macos")]
@@ -461,11 +505,13 @@ async fn install_macos_helper() -> Result<bool, String> {
 }
 
 /// Check if bundled helper exists (for showing install button)
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 fn has_bundled_helper() -> bool {
     hosts_ops::get_bundled_helper_path().is_some()
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 fn get_hosts_path() -> String {
     #[cfg(windows)]
@@ -479,6 +525,7 @@ fn get_hosts_path() -> String {
     }
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn open_hosts_file() -> Result<(), String> {
     #[cfg(windows)]
@@ -514,6 +561,7 @@ async fn open_hosts_file() -> Result<(), String> {
     }
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn get_history_stats(state: State<'_, AppState>, hours: u32) -> Result<HistoryStats, String> {
     state
@@ -522,6 +570,7 @@ async fn get_history_stats(state: State<'_, AppState>, hours: u32) -> Result<His
         .map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
     state.history_manager.clear_all().map_err(|e| e.to_string())
@@ -530,6 +579,7 @@ async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 // ===== 单端点解绑命令 =====
 
 /// 解绑单个端点的 hosts 绑定
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn unbind_endpoint(state: State<'_, AppState>, domain: String) -> Result<(), String> {
     if hosts_ops::read_binding(&domain).is_none() {
@@ -556,6 +606,7 @@ async fn unbind_endpoint(state: State<'_, AppState>, domain: String) -> Result<(
 }
 
 /// 检查是否有活跃的 hosts 绑定
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn has_any_bindings(state: State<'_, AppState>) -> Result<bool, String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
@@ -570,6 +621,7 @@ async fn has_any_bindings(state: State<'_, AppState>) -> Result<bool, String> {
 // ===== 持续优化命令 =====
 
 /// 启动持续优化后台任务（幂等，已运行则跳过）
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn start_continuous_optimization(state: State<'_, AppState>) -> Result<(), String> {
     let mut hc = state.health_checker.lock().await;
@@ -591,6 +643,7 @@ async fn start_continuous_optimization(state: State<'_, AppState>) -> Result<(),
 }
 
 /// 停止持续优化后台任务
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stop_continuous_optimization(state: State<'_, AppState>) -> Result<(), String> {
     let mut hc = state.health_checker.lock().await;
@@ -602,6 +655,7 @@ async fn stop_continuous_optimization(state: State<'_, AppState>) -> Result<(), 
 }
 
 /// 查询持续优化是否正在运行
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn is_continuous_optimization_running(state: State<'_, AppState>) -> Result<bool, String> {
     let hc = state.health_checker.lock().await;
@@ -611,13 +665,18 @@ async fn is_continuous_optimization_running(state: State<'_, AppState>) -> Resul
 // ===== 单端点测速命令 =====
 
 /// 单独测试一个端点，返回测速结果并更新状态
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn test_single_endpoint(
     state: State<'_, AppState>,
     endpoint: Endpoint,
 ) -> Result<EndpointResult, String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
-    let tester = EndpointTester::new(config.preferred_ips.clone(), config.test_count);
+    let tester = EndpointTester::with_app_handle(
+        config.preferred_ips.clone(),
+        config.test_count,
+        Some(state.app_handle.clone()),
+    );
 
     // 使用 30 秒超时防止永久卡住
     let result = match tokio::time::timeout(
@@ -659,6 +718,7 @@ async fn test_single_endpoint(
 
 /// 获取当前测速结果
 /// 用于程序启动时恢复已有的测速数据
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn get_current_results(state: State<'_, AppState>) -> Result<Vec<EndpointResult>, String> {
     let results = state.results.lock().await;
@@ -672,6 +732,7 @@ const CURRENT_VERSION: &str = env!("APP_VERSION");
 const GITHUB_REPO: &str = "wangwingzero/anyFAST";
 
 /// 检查更新
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn check_for_update() -> Result<UpdateInfo, String> {
     let url = format!(
@@ -751,6 +812,7 @@ fn compare_versions(latest: &str, current: &str) -> bool {
 }
 
 /// 获取当前版本号
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 fn get_current_version() -> String {
     CURRENT_VERSION.to_string()
@@ -766,6 +828,7 @@ const APP_NAME: &str = "anyFAST";
 
 /// 设置开机自启动
 /// Requirements: 1.3
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn set_autostart(enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -805,6 +868,7 @@ async fn set_autostart(enabled: bool) -> Result<(), String> {
 
 /// 获取开机自启动状态
 /// Requirements: 1.3
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn get_autostart() -> Result<bool, String> {
     #[cfg(target_os = "windows")]
@@ -833,6 +897,7 @@ async fn get_autostart() -> Result<bool, String> {
 }
 
 /// Restart the application as administrator
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(windows)]
@@ -887,6 +952,7 @@ async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<(), String> {
 /// Install and start the Windows service (requires admin privileges)
 /// This finds anyfast-service.exe next to the main exe, registers it as a
 /// Windows service, and starts it.
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn install_and_start_service() -> Result<String, String> {
     #[cfg(windows)]
@@ -1007,6 +1073,7 @@ async fn install_and_start_service() -> Result<String, String> {
 
 /// Fetch preferred IPs from a remote URL (e.g., ip.164746.xyz)
 /// Parses the HTML page and extracts IP addresses from table cells
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn fetch_preferred_ips(url: String) -> Result<Vec<String>, String> {
     // URL 白名单校验，防止 SSRF
@@ -1023,22 +1090,27 @@ async fn fetch_preferred_ips(url: String) -> Result<Vec<String>, String> {
         ));
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    let response = client
-        .get(&url)
-        .header("User-Agent", "anyFAST/1.0")
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {}", e))?;
-
-    let html = response
-        .text()
-        .await
-        .map_err(|e| format!("读取响应失败: {}", e))?;
+    // Try with system proxy first, then fallback to no-proxy direct connection
+    let html = match fetch_url_with_client(reqwest::Client::builder(), &url).await {
+        Ok(h) => h,
+        Err(proxy_err) => {
+            // Retry without proxy
+            match fetch_url_with_client(
+                reqwest::Client::builder().no_proxy(),
+                &url,
+            )
+            .await
+            {
+                Ok(h) => h,
+                Err(direct_err) => {
+                    return Err(format!(
+                        "请求失败（代理: {}; 直连: {}）",
+                        proxy_err, direct_err
+                    ));
+                }
+            }
+        }
+    };
 
     // Extract IPs using regex pattern matching on the HTML
     // Look for IPv4 addresses in the content
@@ -1068,6 +1140,29 @@ async fn fetch_preferred_ips(url: String) -> Result<Vec<String>, String> {
     Ok(ips)
 }
 
+/// Helper: build a reqwest client from the given builder and fetch the URL
+async fn fetch_url_with_client(
+    builder: reqwest::ClientBuilder,
+    url: &str,
+) -> Result<String, String> {
+    let client = builder
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    let response = client
+        .get(url)
+        .header("User-Agent", "anyFAST/2.0")
+        .send()
+        .await
+        .map_err(|e| format!("{}", e))?;
+
+    response
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))
+}
+
 /// Check if an IP is in a private range
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
@@ -1084,6 +1179,7 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
+#[cfg(feature = "tauri-runtime")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1101,6 +1197,7 @@ pub fn run() {
                 baselines: BaselineTracker::new(),
                 app_handle: app.handle().clone(),
                 health_checker: Arc::new(Mutex::new(None)),
+                last_test_time: Arc::new(Mutex::new(None)),
             };
             app.manage(state);
 

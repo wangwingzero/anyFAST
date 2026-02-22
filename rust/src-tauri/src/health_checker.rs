@@ -8,6 +8,7 @@ use crate::hosts_ops;
 use crate::models::{Endpoint, EndpointResult, OptimizationEvent, OptimizationEventType};
 use std::collections::HashMap;
 use std::sync::Arc;
+#[cfg(feature = "tauri-runtime")]
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -42,6 +43,7 @@ type FailureCounter = HashMap<String, u32>;
 
 impl HealthChecker {
     /// 启动持续优化后台任务
+    #[cfg(feature = "tauri-runtime")]
     pub fn start(
         app_handle: AppHandle,
         config_manager: ConfigManager,
@@ -85,6 +87,7 @@ impl HealthChecker {
     }
 
     /// 核心循环
+    #[cfg(feature = "tauri-runtime")]
     async fn run_loop(
         app_handle: AppHandle,
         config_manager: ConfigManager,
@@ -109,6 +112,10 @@ impl HealthChecker {
         let mut cached_tester: Option<EndpointTester> = None;
         let mut cached_preferred_ips: Vec<String> = Vec::new();
         let mut cached_test_count: u32 = 0;
+
+        // 全量优选冷却期追踪：域名 → 上次全量优选时间
+        let mut last_full_test: HashMap<String, std::time::Instant> = HashMap::new();
+        const FULL_TEST_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(600); // 10 分钟
 
         loop {
             // 每次循环开始重新加载 config
@@ -168,23 +175,71 @@ impl HealthChecker {
                 }
             };
 
-            // 轻量级测速：仅测当前绑定 IP + 用 test_endpoint 找最优候选
-            // 并发测试所有绑定端点（每个端点内部已经是并发测 IP 的）
+            // === Phase 1: 轻量级检查 — 仅测当前绑定 IP（每端点 1 次 TLS 连接） ===
             let mut join_set = tokio::task::JoinSet::new();
             for (ep, current_ip) in &bound_endpoints {
                 let tester_clone = tester.clone();
                 let ep_clone = ep.clone();
                 let current_ip_clone = current_ip.clone();
                 join_set.spawn(async move {
-                    // 并发执行：1) 测当前绑定 IP  2) 找最优候选
-                    let current_test = tester_clone.test_ip(&ep_clone, current_ip_clone.clone());
-                    let best_test = tester_clone.test_endpoint(&ep_clone);
-                    let (current_result, best_result) = tokio::join!(current_test, best_test);
-                    (ep_clone, current_ip_clone, current_result, best_result)
+                    let current_result =
+                        tester_clone.test_ip(&ep_clone, current_ip_clone.clone()).await;
+                    (ep_clone, current_ip_clone, current_result)
                 });
             }
 
-            // 收集结果
+            // 收集轻量级检查结果
+            let mut light_results: Vec<(Endpoint, String, EndpointResult)> = Vec::new();
+            while let Some(result) = join_set.join_next().await {
+                if cancel_token.is_cancelled() {
+                    break;
+                }
+                let Ok(item) = result else { continue };
+                light_results.push(item);
+            }
+
+            if cancel_token.is_cancelled() {
+                break;
+            }
+
+            // === Phase 2: 判断哪些端点需要全量优选 ===
+            let baselines_snapshot = baselines.lock().await.clone();
+            let mut needs_full_test: Vec<(Endpoint, String)> = Vec::new();
+
+            for (ep, current_ip, current_result) in &light_results {
+                if current_result.success {
+                    // 当前 IP 成功 — 重置失败计数
+                    failure_counts.remove(&ep.domain);
+
+                    // 检查延迟是否严重恶化（比基准高 slow_threshold% 且绝对增加超 300ms）
+                    if let Some(&baseline) = baselines_snapshot.get(&ep.domain) {
+                        if baseline > 0.0 {
+                            let threshold_latency =
+                                baseline * (1.0 + config.slow_threshold as f64 / 100.0);
+                            let abs_increase = current_result.latency - baseline;
+                            if current_result.latency > threshold_latency && abs_increase > 300.0 {
+                                needs_full_test.push((ep.clone(), current_ip.clone()));
+                            }
+                        }
+                    }
+                } else {
+                    // 当前 IP 失败 — 累加失败计数
+                    let count = failure_counts.entry(ep.domain.clone()).or_insert(0);
+                    *count += 1;
+                    if *count >= config.failure_threshold {
+                        needs_full_test.push((ep.clone(), current_ip.clone()));
+                    }
+                }
+            }
+
+            // 应用冷却期过滤：每个域名全量优选后 10 分钟内不重复触发
+            let now = std::time::Instant::now();
+            needs_full_test.retain(|(ep, _)| match last_full_test.get(&ep.domain) {
+                Some(last_time) => now.duration_since(*last_time) >= FULL_TEST_COOLDOWN,
+                None => true,
+            });
+
+            // === Phase 3: 对需要全量优选的端点执行 test_endpoint ===
             struct SwitchAction {
                 domain: String,
                 old_ip: String,
@@ -196,57 +251,80 @@ impl HealthChecker {
 
             let mut switch_actions: Vec<SwitchAction> = Vec::new();
 
-            while let Some(result) = join_set.join_next().await {
-                if cancel_token.is_cancelled() {
-                    break;
-                }
-                let Ok((ep, current_ip, current_result, best_result)) = result else {
-                    continue;
-                };
+            if !needs_full_test.is_empty() {
+                let mut full_join_set = tokio::task::JoinSet::new();
+                for (ep, current_ip) in &needs_full_test {
+                    // 记录全量优选时间（冷却期起点）
+                    last_full_test.insert(ep.domain.clone(), now);
 
-                if !best_result.success {
-                    continue;
-                }
-
-                let new_ip = &best_result.ip;
-                let new_latency = best_result.latency;
-                let current_latency = if current_result.success {
-                    Some(current_result.latency)
-                } else {
-                    None
-                };
-
-                // 同 IP 跳过
-                if new_ip == &current_ip {
-                    failure_counts.remove(&ep.domain);
-                    continue;
-                }
-
-                let should_switch = if let Some(cur_lat) = current_latency {
-                    failure_counts.remove(&ep.domain);
-                    if cur_lat <= 0.0 {
-                        // 延迟为零或负值，视为异常数据，不切换
-                        false
-                    } else {
-                        let improvement_pct = (cur_lat - new_latency) / cur_lat * 100.0;
-                        let improvement_abs = cur_lat - new_latency;
-                        improvement_pct > 20.0 && improvement_abs > 50.0
-                    }
-                } else {
-                    let count = failure_counts.entry(ep.domain.clone()).or_insert(0);
-                    *count += 1;
-                    *count >= config.failure_threshold
-                };
-
-                if should_switch {
-                    switch_actions.push(SwitchAction {
-                        domain: ep.domain.clone(),
-                        old_ip: current_ip.clone(),
-                        new_ip: new_ip.clone(),
-                        old_latency: current_latency,
-                        new_latency,
-                        best_result,
+                    let tester_clone = tester.clone();
+                    let ep_clone = ep.clone();
+                    let current_ip_clone = current_ip.clone();
+                    full_join_set.spawn(async move {
+                        let best_result = tester_clone.test_endpoint(&ep_clone).await;
+                        (ep_clone, current_ip_clone, best_result)
                     });
+                }
+
+                while let Some(result) = full_join_set.join_next().await {
+                    if cancel_token.is_cancelled() {
+                        break;
+                    }
+                    let Ok((ep, current_ip, best_result)) = result else {
+                        continue;
+                    };
+
+                    if !best_result.success {
+                        continue;
+                    }
+
+                    let new_ip = &best_result.ip;
+                    let new_latency = best_result.latency;
+
+                    // 从轻量检查结果获取当前延迟
+                    let current_latency = light_results
+                        .iter()
+                        .find(|item| item.0.domain == ep.domain)
+                        .and_then(|item| {
+                            if item.2.success {
+                                Some(item.2.latency)
+                            } else {
+                                None
+                            }
+                        });
+
+                    // 同 IP 跳过
+                    if new_ip == &current_ip {
+                        failure_counts.remove(&ep.domain);
+                        continue;
+                    }
+
+                    let should_switch = if let Some(cur_lat) = current_latency {
+                        // 当前 IP 能通但延迟恶化 — 需要明显更好才切换
+                        if cur_lat <= 0.0 {
+                            false
+                        } else {
+                            let improvement_pct =
+                                (cur_lat - new_latency) / cur_lat * 100.0;
+                            let improvement_abs = cur_lat - new_latency;
+                            improvement_pct > 20.0 && improvement_abs > 50.0
+                        }
+                    } else {
+                        // 当前 IP 不可达 — 有可用候选就切换
+                        failure_counts.remove(&ep.domain);
+                        true
+                    };
+
+                    if should_switch {
+                        switch_actions.push(SwitchAction {
+                            domain: ep.domain.clone(),
+                            old_ip: current_ip.clone(),
+                            new_ip: new_ip.clone(),
+                            old_latency: current_latency,
+                            new_latency,
+                            best_result,
+                        });
+                    }
                 }
             }
 

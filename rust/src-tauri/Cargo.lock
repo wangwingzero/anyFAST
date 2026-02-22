@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "anyfast"
-version = "1.8.1"
+version = "2.1.0"
 dependencies = [
  "chrono",
  "ctrlc",
@@ -51,6 +51,7 @@ dependencies = [
  "fs2",
  "hickory-resolver",
  "libc",
+ "rand 0.8.5",
  "regex-lite",
  "reqwest 0.12.28",
  "rustls",

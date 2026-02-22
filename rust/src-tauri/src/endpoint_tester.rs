@@ -1,16 +1,20 @@
 //! Endpoint speed tester with Cloudflare IP optimization
 
-use crate::models::{Endpoint, EndpointResult};
+use crate::models::{Endpoint, EndpointResult, TestProgressEvent, TestProgressEventType};
 use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
+use rand::seq::SliceRandom;
+use rand::Rng;
 use reqwest::Client;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+#[cfg(feature = "tauri-runtime")]
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::net::TcpSocket;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
@@ -60,11 +64,11 @@ const DEFAULT_CF_IPS: &[&str] = &[
 const IPDB_API_URL: &str = "https://ip.164746.xyz/ipTop10.html";
 
 /// Max number of candidate IPs for each endpoint
-const MAX_TEST_IPS: usize = 15;
+const MAX_TEST_IPS: usize = 10;
 /// Max concurrent endpoint tests
-const MAX_ENDPOINT_CONCURRENCY: usize = 6;
+const MAX_ENDPOINT_CONCURRENCY: usize = 3;
 /// Max concurrent IP tests within one endpoint
-const MAX_IP_CONCURRENCY_PER_ENDPOINT: usize = 6;
+const MAX_IP_CONCURRENCY_PER_ENDPOINT: usize = 4;
 /// DNS lookup timeout for each endpoint
 const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for a single IP test
@@ -247,6 +251,11 @@ pub struct EndpointTester {
     tls_connector: TlsConnector,
     /// 每个 IP 测试的轮次（取中位数以提高准确性）
     test_rounds: u32,
+    /// 可选的 AppHandle，用于向前端发射测速进度事件
+    #[cfg(feature = "tauri-runtime")]
+    app_handle: Option<AppHandle>,
+    /// 共享 CF 封锁标志：一旦某个端点检测到 CF 风控，其余 CF 端点跳过候选 IP 测试
+    cf_throttled: Arc<AtomicBool>,
 }
 
 use tokio::sync::Mutex;
@@ -282,7 +291,55 @@ impl EndpointTester {
             resolver: Arc::new(resolver),
             tls_connector,
             test_rounds,
+            #[cfg(feature = "tauri-runtime")]
+            app_handle: None,
+            cf_throttled: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// 创建带 AppHandle 的 EndpointTester（用于向前端推送测速进度）
+    #[cfg(feature = "tauri-runtime")]
+    pub fn with_app_handle(
+        custom_cf_ips: Vec<String>,
+        test_rounds: u32,
+        app_handle: Option<AppHandle>,
+    ) -> Self {
+        let mut tester = Self::new(custom_cf_ips, test_rounds);
+        tester.app_handle = app_handle;
+        tester
+    }
+
+    /// 向前端发射测速进度事件（无 AppHandle 时 no-op）
+    #[cfg(feature = "tauri-runtime")]
+    fn emit_progress(
+        &self,
+        event_type: TestProgressEventType,
+        level: &str,
+        endpoint_name: Option<&str>,
+        message: String,
+    ) {
+        if let Some(handle) = &self.app_handle {
+            let _ = handle.emit(
+                "test-progress",
+                TestProgressEvent {
+                    event_type,
+                    level: level.to_string(),
+                    endpoint_name: endpoint_name.map(|s| s.to_string()),
+                    message,
+                },
+            );
+        }
+    }
+
+    /// 无 tauri-runtime 时 emit_progress 为空操作
+    #[cfg(not(feature = "tauri-runtime"))]
+    fn emit_progress(
+        &self,
+        _event_type: TestProgressEventType,
+        _level: &str,
+        _endpoint_name: Option<&str>,
+        _message: String,
+    ) {
     }
 
     pub fn cancel(&self) {
@@ -332,6 +389,14 @@ impl EndpointTester {
         // Limit concurrent endpoint tests to avoid overwhelming the system
         let max_concurrency = endpoints.len().clamp(1, MAX_ENDPOINT_CONCURRENCY);
         debug_log!("最大并发数: {}", max_concurrency);
+
+        // 发射 TestStarted 事件
+        self.emit_progress(
+            TestProgressEventType::TestStarted,
+            "info",
+            None,
+            format!("开始测速 {} 个端点 (并发 {})", endpoints.len(), max_concurrency),
+        );
         let semaphore = Arc::new(Semaphore::new(max_concurrency));
         let mut join_set = JoinSet::new();
 
@@ -494,6 +559,25 @@ impl EndpointTester {
             results.first().map(|r| r.latency).unwrap_or(0.0)
         );
 
+        // 发射 TestFinished 事件
+        let best_latency = results.first().filter(|r| r.success).map(|r| r.latency);
+        let finish_msg = if let Some(lat) = best_latency {
+            format!(
+                "测速完成: {}/{} 成功, 最佳延迟 {:.0}ms",
+                success_count,
+                results.len(),
+                lat
+            )
+        } else {
+            format!("测速完成: {}/{} 成功", success_count, results.len())
+        };
+        self.emit_progress(
+            TestProgressEventType::TestFinished,
+            if success_count > 0 { "success" } else { "error" },
+            None,
+            finish_msg,
+        );
+
         results
     }
 
@@ -522,16 +606,36 @@ impl EndpointTester {
         let dns_ips: Vec<String> = match dns_result {
             Ok(Ok(lookup)) => {
                 let ips: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
+                let dns_elapsed_ms = dns_start.elapsed().as_secs_f64() * 1000.0;
                 debug_log!(
                     "  DNS 成功 ({:.1}ms): {} 个 IP - {:?}",
-                    dns_start.elapsed().as_secs_f64() * 1000.0,
+                    dns_elapsed_ms,
                     ips.len(),
                     ips
+                );
+                let is_cf = ips.iter().any(|ip| is_cloudflare_ip(ip));
+                self.emit_progress(
+                    TestProgressEventType::DnsResolved,
+                    "info",
+                    Some(&endpoint.name),
+                    format!(
+                        "[{}] DNS 成功: {}个IP ({:.0}ms){}",
+                        endpoint.name,
+                        ips.len(),
+                        dns_elapsed_ms,
+                        if is_cf { ", CF站点" } else { "" }
+                    ),
                 );
                 ips
             }
             Ok(Err(e)) => {
                 error_log!("  DNS 失败: {}", e);
+                self.emit_progress(
+                    TestProgressEventType::DnsFailed,
+                    "error",
+                    Some(&endpoint.name),
+                    format!("[{}] DNS 解析失败: {}", endpoint.name, e),
+                );
                 return EndpointResult::failure(
                     endpoint.clone(),
                     String::new(),
@@ -540,6 +644,12 @@ impl EndpointTester {
             }
             Err(_) => {
                 error_log!("  DNS 超时 ({}s)", DNS_LOOKUP_TIMEOUT.as_secs());
+                self.emit_progress(
+                    TestProgressEventType::DnsFailed,
+                    "error",
+                    Some(&endpoint.name),
+                    format!("[{}] DNS 解析超时 ({}s)", endpoint.name, DNS_LOOKUP_TIMEOUT.as_secs()),
+                );
                 return EndpointResult::failure(endpoint.clone(), String::new(), "DNS超时".into());
             }
         };
@@ -558,11 +668,31 @@ impl EndpointTester {
         let original_result = self.test_single_ip(endpoint, original_ip.clone()).await;
         let original_latency = if original_result.success {
             debug_log!("  原始 IP 延迟: {:.0}ms", original_result.latency);
+            self.emit_progress(
+                TestProgressEventType::OriginalIpTested,
+                "info",
+                Some(&endpoint.name),
+                format!(
+                    "[{}] 原始IP {}: {:.0}ms",
+                    endpoint.name, original_ip, original_result.latency
+                ),
+            );
             original_result.latency
         } else {
             debug_log!(
                 "  原始 IP 失败: {}",
                 original_result.error.as_deref().unwrap_or("unknown")
+            );
+            self.emit_progress(
+                TestProgressEventType::OriginalIpTested,
+                "warning",
+                Some(&endpoint.name),
+                format!(
+                    "[{}] 原始IP {} 失败: {}",
+                    endpoint.name,
+                    original_ip,
+                    original_result.error.as_deref().unwrap_or("unknown")
+                ),
             );
             9999.0
         };
@@ -571,6 +701,56 @@ impl EndpointTester {
         let is_cf = dns_ips.iter().any(|ip| is_cloudflare_ip(ip));
         if is_cf {
             debug_log!("  检测到 Cloudflare IP，启用 CF 优选");
+        }
+
+        // 封锁快速跳过：如果其他端点已检测到 CF 风控，跳过候选 IP 测试
+        if self.cf_throttled.load(Ordering::SeqCst) && is_cf {
+            warn_log!(
+                "  [{}] CF 风控已触发，跳过候选IP测试，使用原始IP",
+                endpoint.name
+            );
+            self.emit_progress(
+                TestProgressEventType::CfThrottleDetected,
+                "warning",
+                Some(&endpoint.name),
+                format!(
+                    "[{}] 检测到CF风控（由其他端点触发），跳过候选IP测试",
+                    endpoint.name
+                ),
+            );
+            // 直接返回原始 IP 结果
+            if original_result.success {
+                let result = EndpointResult::success_with_comparison(
+                    endpoint.clone(),
+                    original_result.ip.clone(),
+                    original_result.latency,
+                    original_ip,
+                    original_latency,
+                );
+                self.emit_progress(
+                    TestProgressEventType::EndpointComplete,
+                    "success",
+                    Some(&endpoint.name),
+                    format!(
+                        "[{}] 最优: {} {:.0}ms (CF风控跳过候选)",
+                        endpoint.name, result.ip, result.latency
+                    ),
+                );
+                return result;
+            } else {
+                let result = EndpointResult::failure(
+                    endpoint.clone(),
+                    original_ip,
+                    "CF风控+原始IP失败".into(),
+                );
+                self.emit_progress(
+                    TestProgressEventType::EndpointComplete,
+                    "error",
+                    Some(&endpoint.name),
+                    format!("[{}] 失败: CF风控+原始IP不可用", endpoint.name),
+                );
+                return result;
+            }
         }
 
         // Collect IPs to test
@@ -608,15 +788,25 @@ impl EndpointTester {
 
         debug_log!("  准备测试 {} 个 IP", test_ips.len());
 
+        // 打乱候选 IP 顺序，避免每次以相同顺序访问 CF 边缘节点（降低被识别为扫描行为的概率）
+        let mut test_ips = test_ips;
+        test_ips.shuffle(&mut rand::thread_rng());
+
         // Test all IPs concurrently with timeout
         let mut join_set = JoinSet::new();
         let ip_semaphore = Arc::new(Semaphore::new(MAX_IP_CONCURRENCY_PER_ENDPOINT));
-        for ip in test_ips.iter() {
+        for (ip_idx, ip) in test_ips.iter().enumerate() {
             let ep = endpoint.clone();
             let tester = self.clone();
             let ip_clone = ip.clone();
             let ip_permit = ip_semaphore.clone();
             join_set.spawn(async move {
+                // Stagger connection attempts to avoid burst traffic that triggers
+                // Cloudflare rate limiting (main cause of "all timeout" on retests)
+                if ip_idx > 0 {
+                    let jitter = rand::thread_rng().gen_range(0u64..50);
+                    tokio::time::sleep(Duration::from_millis(80 * ip_idx as u64 + jitter)).await;
+                }
                 match ip_permit.acquire_owned().await {
                     Ok(_permit) => tester.test_single_ip(&ep, ip_clone).await,
                     Err(_) => EndpointResult::failure(ep, ip_clone, "并发控制异常".into()),
@@ -628,6 +818,8 @@ impl EndpointTester {
         let mut best_result: Option<EndpointResult> = None;
         let ip_test_start = Instant::now();
         let ip_test_timeout = IP_TEST_TOTAL_TIMEOUT;
+        let mut ip_success_count: usize = 0;
+        let mut ip_tested_count: usize = 0;
 
         loop {
             // 检查总超时
@@ -650,7 +842,9 @@ impl EndpointTester {
             // 等待下一个结果（3秒超时）
             match tokio::time::timeout(Duration::from_secs(3), join_set.join_next()).await {
                 Ok(Some(Ok(result))) => {
+                    ip_tested_count += 1;
                     if result.success {
+                        ip_success_count += 1;
                         if best_result.is_none()
                             || result.latency < best_result.as_ref().unwrap().latency
                         {
@@ -670,6 +864,29 @@ impl EndpointTester {
                             result.error.as_deref().unwrap_or("unknown")
                         );
                     }
+
+                    // CF 封锁检测：已测试 ≥5 个 IP && 成功率 < 20% && 是 CF 站点
+                    if is_cf && ip_tested_count >= 5 && ip_success_count * 5 < ip_tested_count {
+                        warn_log!(
+                            "  [{}] 检测到CF风控: {}/{} IP 成功 ({:.0}%)，中止剩余候选IP",
+                            endpoint.name,
+                            ip_success_count,
+                            ip_tested_count,
+                            ip_success_count as f64 / ip_tested_count as f64 * 100.0
+                        );
+                        self.cf_throttled.store(true, Ordering::SeqCst);
+                        self.emit_progress(
+                            TestProgressEventType::CfThrottleDetected,
+                            "warning",
+                            Some(&endpoint.name),
+                            format!(
+                                "[{}] 检测到CF风控，跳过剩余候选IP ({}/{}成功)",
+                                endpoint.name, ip_success_count, ip_tested_count
+                            ),
+                        );
+                        join_set.abort_all();
+                        break;
+                    }
                 }
                 Ok(Some(Err(e))) => {
                     error_log!("    IP 测试任务 panic: {:?}", e);
@@ -684,6 +901,33 @@ impl EndpointTester {
                     debug_log!("    等待 IP 测试结果...");
                 }
             }
+        }
+
+        // 发射候选 IP 测试完成事件
+        if let Some(best) = &best_result {
+            self.emit_progress(
+                TestProgressEventType::CandidateTestComplete,
+                "info",
+                Some(&endpoint.name),
+                format!(
+                    "[{}] 测试 {} 个候选IP, 最优 {} ({:.0}ms)",
+                    endpoint.name,
+                    test_ips.len(),
+                    best.ip,
+                    best.latency
+                ),
+            );
+        } else {
+            self.emit_progress(
+                TestProgressEventType::CandidateTestComplete,
+                "warning",
+                Some(&endpoint.name),
+                format!(
+                    "[{}] 测试 {} 个候选IP, 全部失败",
+                    endpoint.name,
+                    test_ips.len()
+                ),
+            );
         }
 
         // 使用带比较功能的构造函数创建最终结果
@@ -735,6 +979,44 @@ impl EndpointTester {
         };
 
         debug_log!("test_endpoint 完成: {}", endpoint.name);
+
+        // 发射端点完成事件
+        if final_result.success {
+            let speedup_info = if final_result.speedup_percent.abs() > 0.1 {
+                format!(
+                    " (原 {:.0}ms, {}{}%)",
+                    original_latency,
+                    if final_result.speedup_percent > 0.0 { "加速 " } else { "减速 " },
+                    final_result.speedup_percent.abs() as i32
+                )
+            } else {
+                String::new()
+            };
+            self.emit_progress(
+                TestProgressEventType::EndpointComplete,
+                "success",
+                Some(&endpoint.name),
+                format!(
+                    "[{}] 最优: {} {:.0}ms{}",
+                    endpoint.name,
+                    final_result.ip,
+                    final_result.latency,
+                    speedup_info
+                ),
+            );
+        } else {
+            self.emit_progress(
+                TestProgressEventType::EndpointComplete,
+                "error",
+                Some(&endpoint.name),
+                format!(
+                    "[{}] 失败: {}",
+                    endpoint.name,
+                    final_result.error.as_deref().unwrap_or("未知错误")
+                ),
+            );
+        }
+
         final_result
     }
 
@@ -781,8 +1063,16 @@ impl EndpointTester {
 
         let start = Instant::now();
 
-        // TCP connect
-        let stream = TcpStream::connect(addr)
+        // TCP connect with SO_REUSEADDR to avoid TIME_WAIT port conflicts on rapid retests
+        let socket = if addr.is_ipv4() {
+            TcpSocket::new_v4()
+        } else {
+            TcpSocket::new_v6()
+        }
+        .map_err(|e| format!("Socket: {}", e))?;
+        socket.set_reuseaddr(true).ok();
+        let stream = socket
+            .connect(addr)
             .await
             .map_err(|e| format!("TCP: {}", e))?;
 
@@ -802,7 +1092,13 @@ impl EndpointTester {
         // Always test with "/" - we only need to verify IP connectivity (TCP+TLS+HTTP),
         // not the actual API path (e.g. /v1) which often requires authentication and times out
         let request = format!(
-            "HEAD / HTTP/1.1\r\nHost: {}\r\nUser-Agent: anyrouter/1.0\r\nConnection: close\r\n\r\n",
+            "HEAD / HTTP/1.1\r\n\
+             Host: {}\r\n\
+             User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36\r\n\
+             Accept: */*\r\n\
+             Accept-Language: en-US,en;q=0.9\r\n\
+             Connection: close\r\n\
+             \r\n",
             endpoint.domain
         );
 
@@ -819,6 +1115,11 @@ impl EndpointTester {
             .map_err(|e| format!("Read: {}", e))?;
 
         let latency = start.elapsed().as_secs_f64() * 1000.0;
+
+        // Properly shutdown TLS (sends close_notify) to ensure clean socket release.
+        // Without this, sockets accumulate in TIME_WAIT/CLOSE_WAIT on Windows,
+        // causing subsequent tests to fail with timeouts.
+        let _ = tls_stream.shutdown().await;
 
         // Verify HTTP response
         let response = String::from_utf8_lossy(&buf[..n]);

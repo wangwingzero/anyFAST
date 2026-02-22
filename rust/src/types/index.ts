@@ -88,3 +88,12 @@ export interface OptimizationEvent {
   newLatency?: number
   message: string
 }
+
+// ===== 测速进度事件 =====
+
+export interface TestProgressEvent {
+  eventType: string
+  level: 'info' | 'success' | 'warning' | 'error'
+  endpointName?: string
+  message: string
+}

@@ -215,6 +215,30 @@ fn default_continuous_mode() -> bool {
     true
 }
 
+/// 测速进度事件类型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TestProgressEventType {
+    TestStarted,
+    DnsResolved,
+    DnsFailed,
+    OriginalIpTested,
+    CandidateTestComplete,
+    CfThrottleDetected,
+    EndpointComplete,
+    TestFinished,
+}
+
+/// 测速进度事件（后端 → 前端实时日志）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestProgressEvent {
+    pub event_type: TestProgressEventType,
+    pub level: String,
+    pub endpoint_name: Option<String>,
+    pub message: String,
+}
+
 /// 持续优化事件类型
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
