@@ -879,6 +879,7 @@ async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<(), String> {
 
     #[cfg(not(windows))]
     {
+        let _ = app_handle;
         Err("此功能仅在 Windows 上可用".to_string())
     }
 }
