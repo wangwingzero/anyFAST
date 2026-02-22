@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { Sidebar } from './components/Sidebar'
 import { Dashboard } from './components/Dashboard'
 import { Settings } from './components/Settings'
 import { Logs } from './components/Logs'
 import { HistoryView } from './components/HistoryView'
 import { ToastContainer, ToastData, ToastType } from './components'
-import { Endpoint, EndpointResult, AppConfig, LogEntry } from './types'
+import { Endpoint, EndpointResult, AppConfig, LogEntry, OptimizationEvent } from './types'
 
 type View = 'dashboard' | 'settings' | 'logs' | 'history'
 
@@ -32,7 +33,7 @@ function App() {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [results, setResults] = useState<EndpointResult[]>([])
   const [isRunning, setIsRunning] = useState(false)
-  const [progress, setProgress] = useState({ current: 0, total: 0, message: '就绪' })
+  const [, setProgress] = useState({ current: 0, total: 0, message: '就绪' })
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [bindingCount, setBindingCount] = useState(0)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -46,6 +47,7 @@ function App() {
   const [hasBundledHelper, setHasBundledHelper] = useState(false)
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
   const [testingDomains, setTestingDomains] = useState<Set<string>>(new Set())
+  const [isOptimizing, setIsOptimizing] = useState(false)
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastIdCounter
@@ -232,9 +234,48 @@ function App() {
     addLog('info', '日志已清空')
   }, [addLog])
 
+  const refreshBindingCount = useCallback(async () => {
+    try {
+      const count = await invoke<number>('get_binding_count')
+      setBindingCount(count)
+    } catch (e) {
+      console.error('Failed to get binding count:', e)
+    }
+  }, [])
+
   useEffect(() => {
     initializeApp()
   }, [])
+
+  // 监听持续优化事件
+  useEffect(() => {
+    const unlisten = listen<OptimizationEvent>('optimization-event', (event) => {
+      const data = event.payload
+      switch (data.eventType) {
+        case 'started':
+          setIsOptimizing(true)
+          addLog('info', data.message)
+          break
+        case 'stopped':
+          setIsOptimizing(false)
+          addLog('info', data.message)
+          break
+        case 'auto_switch':
+          showToast('success', data.message)
+          addLog('success', data.message)
+          // 刷新 results 和绑定计数
+          invoke<EndpointResult[]>('get_current_results')
+            .then(setResults)
+            .catch(console.error)
+          refreshBindingCount()
+          break
+        case 'check_complete':
+          addLog('info', data.message)
+          break
+      }
+    })
+    return () => { unlisten.then(fn => fn()) }
+  }, [addLog, showToast, refreshBindingCount])
 
   const initializeApp = async () => {
     await loadConfig()
@@ -258,6 +299,19 @@ function App() {
       }
     } catch (e) {
       console.error('Failed to get current results:', e)
+    }
+
+    // 如果持续优化模式开启且有绑定，自动启动
+    try {
+      const cfg = await invoke<AppConfig>('get_config')
+      if (cfg.continuous_mode) {
+        const hasBindings = await invoke<boolean>('has_any_bindings')
+        if (hasBindings) {
+          await invoke('start_continuous_optimization')
+        }
+      }
+    } catch (e) {
+      console.error('Failed to start continuous optimization:', e)
     }
   }
 
@@ -314,6 +368,11 @@ function App() {
       await refreshBindingCount()
       addLog('success', `已绑定 ${count} 个端点`)
       showToast('success', `已绑定 ${count} 个端点`)
+      // 持续优化模式下自动启动（后端已启动，这里确保前端状态同步）
+      try {
+        const running = await invoke<boolean>('is_continuous_optimization_running')
+        setIsOptimizing(running)
+      } catch { /* ignore */ }
     } catch (e) {
       console.error('Apply all failed:', e)
       if (handlePermissionError(e)) {
@@ -338,6 +397,7 @@ function App() {
       await refreshBindingCount()
       addLog('success', `已解绑 ${count} 个端点`)
       showToast('info', `已解绑 ${count} 个端点`)
+      setIsOptimizing(false)
     } catch (e) {
       console.error('Unbind all failed:', e)
       if (handlePermissionError(e)) {
@@ -438,15 +498,6 @@ function App() {
     } catch (e) {
       console.error('Failed to load config:', e)
       addLog('error', `加载配置失败: ${e}`)
-    }
-  }
-
-  const refreshBindingCount = async () => {
-    try {
-      const count = await invoke<number>('get_binding_count')
-      setBindingCount(count)
-    } catch (e) {
-      console.error('Failed to get binding count:', e)
     }
   }
 
@@ -682,10 +733,10 @@ function App() {
             endpoints={endpoints}
             results={results}
             isRunning={isRunning}
-            progress={progress}
             bindingCount={bindingCount}
             testingDomains={testingDomains}
             config={config}
+            isOptimizing={isOptimizing}
             onApply={applyEndpoint}
             onApplyAll={applyAll}
             onUnbindAll={unbindAll}

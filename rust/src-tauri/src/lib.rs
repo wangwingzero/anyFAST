@@ -18,7 +18,7 @@ pub mod client;
 
 use config::ConfigManager;
 use endpoint_tester::{estimate_test_timeout, EndpointTester};
-use health_checker::BaselineTracker;
+use health_checker::{BaselineTracker, HealthChecker};
 use history::HistoryManager;
 use hosts_manager::HostsBinding;
 use models::{
@@ -31,7 +31,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, State, WindowEvent,
+    AppHandle, Manager, State, WindowEvent,
 };
 use tokio::sync::Mutex;
 
@@ -41,6 +41,8 @@ pub struct AppState {
     tester: Arc<Mutex<Option<EndpointTester>>>,
     results: Arc<Mutex<Vec<EndpointResult>>>,
     baselines: BaselineTracker,
+    app_handle: AppHandle,
+    health_checker: Arc<Mutex<Option<HealthChecker>>>,
 }
 
 /// 从端点 URL 中提取目标域名
@@ -226,7 +228,11 @@ async fn apply_endpoint(
 
 #[tauri::command]
 async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> {
-    let results = state.results.lock().await;
+    // 尽早 clone 并释放 results 锁，避免长时间持有
+    let results_snapshot = {
+        let results = state.results.lock().await;
+        results.clone()
+    };
 
     // 获取当前时间戳
     let now = SystemTime::now()
@@ -238,12 +244,12 @@ async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> 
     let baselines = state.baselines.get_baselines_arc();
 
     // 收集所有成功的端点绑定（按 domain 去重，取最优结果）
-    let best_by_domain = collect_best_success_by_domain(&results);
+    let best_by_domain = collect_best_success_by_domain(&results_snapshot);
     let mut bindings: Vec<HostsBinding> = Vec::with_capacity(best_by_domain.len());
     let mut history_records: Vec<HistoryRecord> = Vec::new();
     let mut baseline_updates: Vec<(String, f64)> = Vec::with_capacity(best_by_domain.len());
 
-    for r in results.iter().filter(|r| r.success) {
+    for r in results_snapshot.iter().filter(|r| r.success) {
         // 记录历史
         history_records.push(HistoryRecord {
             timestamp: now,
@@ -285,6 +291,29 @@ async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> 
     let count = hosts_ops::write_bindings_batch(&bindings).map_err(|e| e.to_string())?;
     hosts_ops::flush_dns().map_err(|e| e.to_string())?;
 
+    // 如果持续优化模式开启且有绑定，自动启动后台任务
+    if count > 0 {
+        let config = state.config_manager.load().map_err(|e| e.to_string())?;
+        if config.continuous_mode {
+            let mut hc = state.health_checker.lock().await;
+            // 先停止旧实例（如果存在但已结束也清理掉）
+            if let Some(old) = hc.as_mut() {
+                if !old.is_running() {
+                    // 已结束，清理
+                } else {
+                    old.stop().await;
+                }
+            }
+            let checker = HealthChecker::start(
+                state.app_handle.clone(),
+                state.config_manager.clone(),
+                state.results.clone(),
+                state.baselines.get_baselines_arc(),
+            );
+            *hc = Some(checker);
+        }
+    }
+
     Ok(count as u32)
 }
 
@@ -304,6 +333,15 @@ async fn clear_all_bindings(state: State<'_, AppState>) -> Result<u32, String> {
 
     if count > 0 {
         hosts_ops::flush_dns().map_err(|e| e.to_string())?;
+    }
+
+    // 停止持续优化（没有绑定了）
+    {
+        let mut hc = state.health_checker.lock().await;
+        if let Some(checker) = hc.as_mut() {
+            checker.stop().await;
+        }
+        *hc = None;
     }
 
     Ok(count as u32)
@@ -386,15 +424,14 @@ async fn install_macos_helper() -> Result<bool, String> {
 
         let install_path = "/usr/local/bin/anyfast-helper-macos";
 
-        // Build the installation script
+        // Build the installation script (escape single quotes in paths to prevent injection)
+        let escaped_bundled = bundled_path.display().to_string().replace("'", "'\\''");
+        let escaped_install = install_path.replace("'", "'\\''");
         let script = format!(
             r#"
             do shell script "cp '{}' '{}' && chown root:wheel '{}' && chmod 4755 '{}'" with administrator privileges
             "#,
-            bundled_path.display(),
-            install_path,
-            install_path,
-            install_path
+            escaped_bundled, escaped_install, escaped_install, escaped_install
         );
 
         // Execute with osascript (will show system password dialog)
@@ -494,12 +531,27 @@ async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 
 /// 解绑单个端点的 hosts 绑定
 #[tauri::command]
-async fn unbind_endpoint(domain: String) -> Result<(), String> {
+async fn unbind_endpoint(state: State<'_, AppState>, domain: String) -> Result<(), String> {
     if hosts_ops::read_binding(&domain).is_none() {
         return Ok(()); // 没有绑定，无需操作
     }
     hosts_ops::clear_binding(&domain).map_err(|e| e.to_string())?;
     hosts_ops::flush_dns().map_err(|e| e.to_string())?;
+
+    // 检查是否还有任何绑定，没有则停止持续优化
+    let config = state.config_manager.load().map_err(|e| e.to_string())?;
+    let has_bindings = config
+        .endpoints
+        .iter()
+        .any(|ep| hosts_ops::read_binding(&ep.domain).is_some());
+    if !has_bindings {
+        let mut hc = state.health_checker.lock().await;
+        if let Some(checker) = hc.as_mut() {
+            checker.stop().await;
+        }
+        *hc = None;
+    }
+
     Ok(())
 }
 
@@ -513,6 +565,47 @@ async fn has_any_bindings(state: State<'_, AppState>) -> Result<bool, String> {
         }
     }
     Ok(false)
+}
+
+// ===== 持续优化命令 =====
+
+/// 启动持续优化后台任务（幂等，已运行则跳过）
+#[tauri::command]
+async fn start_continuous_optimization(state: State<'_, AppState>) -> Result<(), String> {
+    let mut hc = state.health_checker.lock().await;
+    if hc.as_ref().is_some_and(|h| h.is_running()) {
+        return Ok(()); // 已在运行
+    }
+    // 清理已结束的旧实例
+    if let Some(old) = hc.as_mut() {
+        old.stop().await;
+    }
+    let checker = HealthChecker::start(
+        state.app_handle.clone(),
+        state.config_manager.clone(),
+        state.results.clone(),
+        state.baselines.get_baselines_arc(),
+    );
+    *hc = Some(checker);
+    Ok(())
+}
+
+/// 停止持续优化后台任务
+#[tauri::command]
+async fn stop_continuous_optimization(state: State<'_, AppState>) -> Result<(), String> {
+    let mut hc = state.health_checker.lock().await;
+    if let Some(checker) = hc.as_mut() {
+        checker.stop().await;
+    }
+    *hc = None;
+    Ok(())
+}
+
+/// 查询持续优化是否正在运行
+#[tauri::command]
+async fn is_continuous_optimization_running(state: State<'_, AppState>) -> Result<bool, String> {
+    let hc = state.health_checker.lock().await;
+    Ok(hc.as_ref().is_some_and(|h| h.is_running()))
 }
 
 // ===== 单端点测速命令 =====
@@ -741,7 +834,7 @@ async fn get_autostart() -> Result<bool, String> {
 
 /// Restart the application as administrator
 #[tauri::command]
-async fn restart_as_admin() -> Result<(), String> {
+async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::ffi::OsStr;
@@ -776,8 +869,9 @@ async fn restart_as_admin() -> Result<(), String> {
 
         // ShellExecuteW returns > 32 on success
         if result.0 as usize > 32 {
-            // Exit current instance
-            std::process::exit(0);
+            // Exit current instance gracefully
+            app_handle.exit(0);
+            Ok(())
         } else {
             Err("用户取消了管理员权限请求".to_string())
         }
@@ -821,7 +915,7 @@ async fn install_and_start_service() -> Result<String, String> {
         log.push_str("已尝试停止旧服务\n");
 
         // Brief wait for service to stop
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
         // Step 2: Delete existing service (ignore errors)
         let _ = std::process::Command::new(r"C:\Windows\System32\sc.exe")
@@ -830,7 +924,7 @@ async fn install_and_start_service() -> Result<String, String> {
             .output();
         log.push_str("已尝试删除旧服务\n");
 
-        std::thread::sleep(std::time::Duration::from_millis(1000));
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
         // Step 3: Create new service
         let bin_path_arg = format!("binPath= \"{}\"", service_path);
@@ -898,7 +992,7 @@ async fn install_and_start_service() -> Result<String, String> {
         log.push_str("服务启动成功\n");
 
         // Step 7: Refresh service status cache
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         hosts_ops::refresh_service_status();
 
         Ok(log)
@@ -914,9 +1008,22 @@ async fn install_and_start_service() -> Result<String, String> {
 /// Parses the HTML page and extracts IP addresses from table cells
 #[tauri::command]
 async fn fetch_preferred_ips(url: String) -> Result<Vec<String>, String> {
+    // URL 白名单校验，防止 SSRF
+    let allowed_hosts = ["ip.164746.xyz"];
+    let parsed_url = url::Url::parse(&url).map_err(|e| format!("无效 URL: {}", e))?;
+    let host = parsed_url
+        .host_str()
+        .ok_or_else(|| "URL 缺少主机名".to_string())?;
+    if !allowed_hosts.contains(&host) {
+        return Err(format!(
+            "不允许的域名: {}，仅支持: {}",
+            host,
+            allowed_hosts.join(", ")
+        ));
+    }
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
-        .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
@@ -991,6 +1098,8 @@ pub fn run() {
                 tester: Arc::new(Mutex::new(None)),
                 results: Arc::new(Mutex::new(Vec::new())),
                 baselines: BaselineTracker::new(),
+                app_handle: app.handle().clone(),
+                health_checker: Arc::new(Mutex::new(None)),
             };
             app.manage(state);
 
@@ -1092,6 +1201,10 @@ pub fn run() {
             // 更新检查
             check_for_update,
             get_current_version,
+            // 持续优化
+            start_continuous_optimization,
+            stop_continuous_optimization,
+            is_continuous_optimization_running,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

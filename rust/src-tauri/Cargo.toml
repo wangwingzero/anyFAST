@@ -1,6 +1,6 @@
 [package]
 name = "anyfast"
-version = "1.8.1"
+version = "2.0.0"
 description = "anyFAST - 中转站端点优选工具"
 authors = ["hudawang"]
 edition = "2021"
@@ -42,12 +42,13 @@ tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 webpki-roots = "0.26"
 hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
-reqwest = { version = "0.12", default-features = false, features = ["native-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "json"] }
 directories = "5"
 thiserror = "2"
 chrono = "0.4"
 fs2 = "0.4"
 regex-lite = "0.1"
+url = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

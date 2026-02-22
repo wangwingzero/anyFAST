@@ -9,7 +9,7 @@
 use fs2::FileExt;
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read as IoRead, Write};
+use std::io::{Read as IoRead, Seek, Write};
 use std::net::IpAddr;
 use std::path::Path;
 use thiserror::Error;
@@ -208,7 +208,11 @@ fn read_hosts_content(file: &mut File) -> Result<String, HostsError> {
     Ok(content)
 }
 
-/// Atomic write: write to temp file, fsync, then rename
+/// Atomic write: write to temp file, fsync, then rename.
+/// NOTE: Only use when no file lock is held on the target path.
+/// When a file lock is held, use `write_locked` instead to avoid
+/// Windows rename conflicts with open file handles.
+#[allow(dead_code)]
 fn atomic_write(path: &Path, content: &str) -> Result<(), HostsError> {
     // Create temp file in the same directory (required for atomic rename)
     let parent = path.parent().unwrap_or(Path::new("."));
@@ -241,6 +245,18 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), HostsError> {
         HostsError::Io(e)
     })?;
 
+    Ok(())
+}
+
+/// Write content directly to an already-locked file handle.
+/// This avoids the rename-while-locked conflict on Windows by
+/// using truncate + write + fsync on the same file handle.
+fn write_locked(file: &mut File, content: &str) -> Result<(), HostsError> {
+    file.seek(std::io::SeekFrom::Start(0))?;
+    file.set_len(0)?; // truncate
+    file.write_all(content.as_bytes())?;
+    file.flush()?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -317,8 +333,8 @@ impl HostsManager {
         // Generate new content
         let new_content = parsed.render();
 
-        // Atomic write
-        atomic_write(path, &new_content)?;
+        // Write directly to the locked file (avoids rename conflict on Windows)
+        write_locked(&mut file, &new_content)?;
 
         // Lock is automatically released when file is dropped
         Ok(())
@@ -377,8 +393,8 @@ impl HostsManager {
         // Generate new content
         let new_content = parsed.render();
 
-        // Atomic write
-        atomic_write(path, &new_content)?;
+        // Write directly to the locked file (avoids rename conflict on Windows)
+        write_locked(&mut file, &new_content)?;
 
         // Lock is automatically released when file is dropped
         Ok(updated_count)
@@ -420,8 +436,8 @@ impl HostsManager {
         // Generate new content
         let new_content = parsed.render();
 
-        // Atomic write
-        atomic_write(path, &new_content)?;
+        // Write directly to the locked file (avoids rename conflict on Windows)
+        write_locked(&mut file, &new_content)?;
 
         Ok(())
     }
@@ -470,8 +486,8 @@ impl HostsManager {
         // Generate new content
         let new_content = parsed.render();
 
-        // Atomic write
-        atomic_write(path, &new_content)?;
+        // Write directly to the locked file (avoids rename conflict on Windows)
+        write_locked(&mut file, &new_content)?;
 
         Ok(removed_count)
     }
@@ -511,8 +527,8 @@ impl HostsManager {
         // Generate new content (will not include anyFAST block since bindings is empty)
         let new_content = parsed.render();
 
-        // Atomic write
-        atomic_write(path, &new_content)?;
+        // Write directly to the locked file (avoids rename conflict on Windows)
+        write_locked(&mut file, &new_content)?;
 
         Ok(removed_count)
     }

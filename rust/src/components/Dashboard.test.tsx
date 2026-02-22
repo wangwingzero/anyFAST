@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Dashboard } from './Dashboard'
-import type { Endpoint, EndpointResult, Progress, AppConfig } from '../types'
+import type { Endpoint, EndpointResult, AppConfig } from '../types'
 
 describe('Dashboard', () => {
   const mockEndpoints: Endpoint[] = [
@@ -34,23 +34,21 @@ describe('Dashboard', () => {
     },
   ]
 
-  const mockProgress: Progress = {
-    current: 0,
-    total: 0,
-    message: '就绪',
-  }
-
   const mockConfig: AppConfig = {
+    check_interval: 120,
+    slow_threshold: 150,
+    failure_threshold: 5,
+    test_count: 3,
     endpoints: mockEndpoints,
     autostart: false,
     preferred_ips: [],
+    continuous_mode: true,
   }
 
   const defaultProps = {
     endpoints: mockEndpoints,
     results: [] as EndpointResult[],
     isRunning: false,
-    progress: mockProgress,
     bindingCount: 0,
     testingDomains: new Set<string>(),
     config: mockConfig,

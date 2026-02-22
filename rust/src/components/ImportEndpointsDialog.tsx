@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useMemo } from 'react'
 import { X, FileUp, ClipboardPaste, Upload, CheckSquare, Square, AlertCircle } from 'lucide-react'
 import { Endpoint } from '../types'
 
@@ -81,7 +81,7 @@ export function ImportEndpointsDialog({
   const [pasteText, setPasteText] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const existingDomains = new Set(existingEndpoints.map((e) => e.domain))
+  const existingDomains = useMemo(() => new Set(existingEndpoints.map((e) => e.domain)), [existingEndpoints])
 
   const toParsedList = useCallback(
     (items: { name: string; url: string }[]): ParsedEndpoint[] => {

@@ -20,9 +20,14 @@ export interface EndpointResult {
 }
 
 export interface AppConfig {
-  endpoints: Endpoint[]
+  check_interval: number
+  slow_threshold: number
+  failure_threshold: number
+  test_count: number
   autostart: boolean
+  endpoints: Endpoint[]
   preferred_ips: string[]
+  continuous_mode: boolean
 }
 
 export interface Progress {
@@ -70,4 +75,16 @@ export interface UpdateInfo {
   releaseUrl: string
   releaseNotes: string
   publishedAt: string
+}
+
+// ===== 持续优化事件 =====
+
+export interface OptimizationEvent {
+  eventType: 'auto_switch' | 'check_complete' | 'started' | 'stopped'
+  domain?: string
+  oldIp?: string
+  newIp?: string
+  oldLatency?: number
+  newLatency?: number
+  message: string
 }

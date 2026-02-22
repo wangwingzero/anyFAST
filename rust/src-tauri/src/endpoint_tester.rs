@@ -1,7 +1,7 @@
 //! Endpoint speed tester with Cloudflare IP optimization
 
 use crate::models::{Endpoint, EndpointResult};
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
 use reqwest::Client;
 use std::collections::HashSet;
@@ -102,6 +102,21 @@ pub fn estimate_test_timeout(endpoint_count: usize) -> Duration {
     ))
 }
 
+/// 公共 DNS 解析器列表（用于非 CF 站点的多 DNS 优选）
+const PUBLIC_DNS_SERVERS: &[&str] = &[
+    "8.8.8.8",        // Google
+    "8.8.4.4",        // Google
+    "1.1.1.1",        // Cloudflare
+    "1.0.0.1",        // Cloudflare
+    "9.9.9.9",        // Quad9
+    "208.67.222.222", // OpenDNS
+    "223.5.5.5",      // AliDNS
+    "223.6.6.6",      // AliDNS
+];
+
+/// 多 DNS 查询总超时
+const MULTI_DNS_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// Cloudflare IP ranges for detection
 const CF_RANGES: &[&str] = &[
     "104.16.", "104.17.", "104.18.", "104.19.", "104.20.", "104.21.", "104.22.", "104.23.",
@@ -129,6 +144,47 @@ fn merge_candidate_ips(cf_ips: Vec<String>, dns_ips: &[String], limit: usize) ->
     }
 
     merged
+}
+
+/// 并发查询多个公共 DNS 解析器，收集域名的所有唯一 IP
+async fn resolve_via_multi_dns(domain: &str) -> Vec<String> {
+    let mut join_set = JoinSet::new();
+
+    for &dns_server in PUBLIC_DNS_SERVERS {
+        let domain = domain.to_string();
+        let addr: std::net::IpAddr = dns_server.parse().unwrap();
+        join_set.spawn(async move {
+            let ns = NameServerConfig::new(SocketAddr::new(addr, 53), Protocol::Udp);
+            let config = ResolverConfig::from_parts(None, vec![], vec![ns]);
+            let mut opts = ResolverOpts::default();
+            opts.timeout = Duration::from_secs(2);
+            opts.attempts = 1;
+            let resolver = TokioAsyncResolver::tokio(config, opts);
+            match resolver.lookup_ip(&domain).await {
+                Ok(lookup) => lookup.iter().map(|ip| ip.to_string()).collect::<Vec<_>>(),
+                Err(_) => vec![],
+            }
+        });
+    }
+
+    // 收集结果，总超时 3 秒
+    let mut all_ips = Vec::new();
+    let start = Instant::now();
+    while let Ok(Some(result)) = tokio::time::timeout(
+        MULTI_DNS_TIMEOUT.saturating_sub(start.elapsed()),
+        join_set.join_next(),
+    )
+    .await
+    {
+        if let Ok(ips) = result {
+            all_ips.extend(ips);
+        }
+    }
+
+    // 去重（保持顺序）
+    let mut seen = HashSet::new();
+    all_ips.retain(|ip| seen.insert(ip.clone()));
+    all_ips
 }
 
 /// Fetch optimized Cloudflare IPs from online API
@@ -526,7 +582,28 @@ impl EndpointTester {
             let cf_ips = self.get_cf_ips().await;
             merge_candidate_ips(cf_ips, &dns_ips, MAX_TEST_IPS)
         } else {
-            dns_ips.clone()
+            // 非 CF 站点：并发查询多个公共 DNS，收集更多候选 IP
+            debug_log!("  非CF站点，启用多DNS解析器优选");
+            let multi_dns_ips = resolve_via_multi_dns(&endpoint.domain).await;
+            if multi_dns_ips.len() > dns_ips.len() {
+                debug_log!(
+                    "  多DNS解析发现 {} 个唯一IP（原DNS {} 个）",
+                    multi_dns_ips.len(),
+                    dns_ips.len()
+                );
+            }
+            // 合并：DNS IP 优先，然后追加多 DNS 发现的新 IP，限制总数
+            let mut seen = HashSet::new();
+            let mut merged = Vec::with_capacity(MAX_TEST_IPS);
+            for ip in dns_ips.iter().chain(multi_dns_ips.iter()) {
+                if seen.insert(ip.clone()) {
+                    merged.push(ip.clone());
+                    if merged.len() >= MAX_TEST_IPS {
+                        break;
+                    }
+                }
+            }
+            merged
         };
 
         debug_log!("  准备测试 {} 个 IP", test_ips.len());
@@ -722,44 +799,11 @@ impl EndpointTester {
             .await
             .map_err(|e| format!("TLS: {}", e))?;
 
-        // Extract path from URL - properly parse to avoid matching scheme slashes
-        // Also sanitize to prevent CRLF injection attacks
-        let path = {
-            let url_str = endpoint.url.as_str();
-            // Find the path after the domain
-            let raw_path = if let Some(scheme_end) = url_str.find("://") {
-                let after_scheme = &url_str[scheme_end + 3..];
-                if let Some(path_start) = after_scheme.find('/') {
-                    &after_scheme[path_start..]
-                } else {
-                    "/"
-                }
-            } else if url_str.starts_with('/') {
-                url_str
-            } else {
-                "/"
-            };
-
-            // Sanitize: remove CR/LF characters to prevent HTTP header injection
-            // This is a security measure against CRLF injection attacks
-            if raw_path.contains('\r') || raw_path.contains('\n') {
-                warn_log!(
-                    "  警告: URL 路径包含非法字符 (CRLF)，已过滤: {}",
-                    endpoint.url
-                );
-                raw_path
-                    .chars()
-                    .filter(|c| *c != '\r' && *c != '\n')
-                    .collect::<String>()
-            } else {
-                raw_path.to_string()
-            }
-        };
-
-        // Send HTTP HEAD request
+        // Always test with "/" - we only need to verify IP connectivity (TCP+TLS+HTTP),
+        // not the actual API path (e.g. /v1) which often requires authentication and times out
         let request = format!(
-            "HEAD {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: anyrouter/1.0\r\nConnection: close\r\n\r\n",
-            path, endpoint.domain
+            "HEAD / HTTP/1.1\r\nHost: {}\r\nUser-Agent: anyrouter/1.0\r\nConnection: close\r\n\r\n",
+            endpoint.domain
         );
 
         tls_stream

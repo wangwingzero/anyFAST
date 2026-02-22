@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2, Github, Star, AlertCircle } from 'lucide-react'
+import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2, Github, Star, AlertCircle, Repeat } from 'lucide-react'
 import { Endpoint, AppConfig } from '../types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
@@ -10,8 +10,8 @@ import { relaunch } from '@tauri-apps/plugin-process'
 const DEFAULT_ENDPOINTS: Endpoint[] = [
   {
     name: 'anyrouter',
-    url: 'https://betterclau.de/claude/anyrouter.top',
-    domain: 'betterclau.de',
+    url: 'https://cf.betterclau.de/claude/anyrouter.top',
+    domain: 'cf.betterclau.de',
     enabled: true,
   },
   {
@@ -49,6 +49,10 @@ export function Settings({
   const [autostart, setAutostart] = useState(config?.autostart ?? false)
   const [autostartLoading, setAutostartLoading] = useState(false)
 
+  // 持续优化状态
+  const [continuousMode, setContinuousMode] = useState(config?.continuous_mode ?? true)
+  const [continuousModeLoading, setContinuousModeLoading] = useState(false)
+
   const initializedRef = useRef(false)
 
   // 初始化
@@ -56,6 +60,7 @@ export function Settings({
     if (!config) return
     if (!initializedRef.current) {
       initializedRef.current = true
+      setContinuousMode(config.continuous_mode ?? true)
     }
   }, [config])
 
@@ -83,6 +88,32 @@ export function Settings({
       setAutostart(!enabled)
     } finally {
       setAutostartLoading(false)
+    }
+  }
+
+  // 更新持续优化模式
+  const updateContinuousMode = async (enabled: boolean) => {
+    if (!config) return
+    setContinuousModeLoading(true)
+    try {
+      const newConfig: AppConfig = { ...config, continuous_mode: enabled }
+      await invoke('save_config', { config: newConfig })
+      onConfigChange(newConfig)
+      setContinuousMode(enabled)
+      if (!enabled) {
+        await invoke('stop_continuous_optimization')
+      } else {
+        // 如果有活跃绑定则启动
+        const hasBindings = await invoke<boolean>('has_any_bindings')
+        if (hasBindings) {
+          await invoke('start_continuous_optimization')
+        }
+      }
+    } catch (e) {
+      console.error('Failed to set continuous mode:', e)
+      setContinuousMode(!enabled)
+    } finally {
+      setContinuousModeLoading(false)
     }
   }
 
@@ -170,11 +201,16 @@ export function Settings({
   const restoreAllDefaults = async () => {
     onEndpointsChange(DEFAULT_ENDPOINTS)
 
-    // 保存默认配置
+    // 保存默认配置（保留后端专属字段的当前值，避免静默重置）
     const newConfig: AppConfig = {
+      check_interval: config?.check_interval ?? 120,
+      slow_threshold: config?.slow_threshold ?? 150,
+      failure_threshold: config?.failure_threshold ?? 5,
+      test_count: config?.test_count ?? 3,
       endpoints: DEFAULT_ENDPOINTS,
       autostart: config?.autostart ?? false,  // 保持当前自启动设置
       preferred_ips: [],
+      continuous_mode: config?.continuous_mode ?? true,  // 保持当前持续优化设置
     }
     try {
       await invoke('save_config', { config: newConfig })
@@ -213,6 +249,28 @@ export function Settings({
                 <div
                   className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
                     autostart ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </label>
+
+            <label className="flex items-center justify-between p-3 bg-apple-gray-50 rounded-xl cursor-pointer">
+              <div className="flex-1 min-w-0 mr-3">
+                <div className="flex items-center gap-2">
+                  <Repeat className="w-4 h-4 text-apple-gray-400" />
+                  <span className="text-sm text-apple-gray-600">持续优化模式</span>
+                </div>
+                <p className="text-xs text-apple-gray-400 mt-0.5 ml-6">绑定后自动定期测速并切换至更快 IP</p>
+              </div>
+              <div
+                className={`w-11 h-6 rounded-full p-0.5 transition-colors flex-shrink-0 ${
+                  continuousModeLoading ? 'opacity-50 cursor-wait' : ''
+                } ${continuousMode ? 'bg-apple-green' : 'bg-apple-gray-300'}`}
+                onClick={() => !continuousModeLoading && updateContinuousMode(!continuousMode)}
+              >
+                <div
+                  className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    continuousMode ? 'translate-x-5' : 'translate-x-0'
                   }`}
                 />
               </div>
@@ -276,14 +334,14 @@ export function Settings({
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
-                  onClick={() => open('https://github.com/wangwingzero/anyFAST/issues')}
+                  onClick={() => open('https://github.com/wangwingzero/anyFAST/issues').catch(console.error)}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 text-apple-gray-500 text-xs font-medium rounded-lg hover:bg-apple-gray-200 transition-colors"
                 >
                   <AlertCircle className="w-3.5 h-3.5" />
                   Issue
                 </button>
                 <button
-                  onClick={() => open('https://github.com/wangwingzero/anyFAST')}
+                  onClick={() => open('https://github.com/wangwingzero/anyFAST').catch(console.error)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-gray-800 text-white text-xs font-medium rounded-lg hover:bg-apple-gray-700 transition-colors"
                 >
                   <Star className="w-3.5 h-3.5" />
@@ -296,9 +354,10 @@ export function Settings({
             {updateError && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-xl">
                 <p className="text-sm text-red-600 mb-2">更新失败: {updateError}</p>
-                {getUpdateErrorHint(updateError) && (
-                  <p className="text-xs text-red-500 mb-2">{getUpdateErrorHint(updateError)}</p>
-                )}
+                {(() => {
+                  const hint = getUpdateErrorHint(updateError)
+                  return hint && <p className="text-xs text-red-500 mb-2">{hint}</p>
+                })()}
                 <button
                   onClick={openReleasePage}
                   className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-red-600 hover:text-red-700 hover:underline transition-colors"

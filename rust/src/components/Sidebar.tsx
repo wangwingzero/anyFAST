@@ -31,7 +31,7 @@ export function Sidebar({ currentView, onNavigate, refreshTrigger }: SidebarProp
 
   useEffect(() => {
     refreshPermissionStatus()
-  }, [refreshTrigger])
+  }, [refreshTrigger, refreshPermissionStatus])
 
   const handleRestartAsAdmin = async () => {
     setIsRestarting(true)

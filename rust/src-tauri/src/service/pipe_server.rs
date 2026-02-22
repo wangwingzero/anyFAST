@@ -42,13 +42,15 @@ const PIPE_ACCESS_DUPLEX: u32 = 0x00000003;
 
 /// SDDL string for service pipe access
 /// D: = DACL
-/// (A;;GRGW;;;AU) = Allow Generic Read + Generic Write to Authenticated Users (clients)
+/// (A;;GRGW;;;IU) = Allow Generic Read + Generic Write to Interactive Users (local logged-in users only)
 /// (A;;GA;;;BA) = Allow Generic All to Built-in Administrators
 /// (A;;GA;;;SY) = Allow Generic All to Local System
 ///
 /// Note: Clients (GUI) need read/write access to send requests and receive responses.
 /// Only the service (running as SYSTEM) needs full control.
-const PIPE_ACCESS_SDDL: &str = "D:(A;;GRGW;;;AU)(A;;GA;;;BA)(A;;GA;;;SY)";
+/// Using IU instead of AU to restrict access to interactive (locally logged-in) users only,
+/// preventing remote or service accounts from sending pipe commands.
+const PIPE_ACCESS_SDDL: &str = "D:(A;;GRGW;;;IU)(A;;GA;;;BA)(A;;GA;;;SY)";
 
 /// SDDL revision
 const SDDL_REVISION_1: u32 = 1;

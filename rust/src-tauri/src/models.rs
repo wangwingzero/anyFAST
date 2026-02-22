@@ -154,6 +154,8 @@ pub struct AppConfig {
     pub endpoints: Vec<Endpoint>,
     #[serde(default = "default_preferred_ips")]
     pub preferred_ips: Vec<String>,
+    #[serde(default = "default_continuous_mode")]
+    pub continuous_mode: bool,
 }
 
 impl Default for AppConfig {
@@ -166,6 +168,7 @@ impl Default for AppConfig {
             autostart: default_autostart(),
             endpoints: default_endpoints(),
             preferred_ips: default_preferred_ips(),
+            continuous_mode: default_continuous_mode(),
         }
     }
 }
@@ -206,6 +209,34 @@ fn default_endpoints() -> Vec<Endpoint> {
 
 fn default_preferred_ips() -> Vec<String> {
     Vec::new()
+}
+
+fn default_continuous_mode() -> bool {
+    true
+}
+
+/// 持续优化事件类型
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OptimizationEventType {
+    AutoSwitch,
+    CheckComplete,
+    Started,
+    #[default]
+    Stopped,
+}
+
+/// 持续优化事件（后端 → 前端通知）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OptimizationEvent {
+    pub event_type: OptimizationEventType,
+    pub domain: Option<String>,
+    pub old_ip: Option<String>,
+    pub new_ip: Option<String>,
+    pub old_latency: Option<f64>,
+    pub new_latency: Option<f64>,
+    pub message: String,
 }
 
 #[cfg(test)]
@@ -339,6 +370,7 @@ mod tests {
         assert!(!config.autostart); // 默认关闭
         assert_eq!(config.endpoints.len(), 2); // 2个默认站点
         assert!(config.preferred_ips.is_empty()); // 默认自动优选
+        assert!(config.continuous_mode); // 默认开启持续优化
         assert_eq!(config.endpoints[0].name, "anyrouter");
         assert!(config.endpoints[0].enabled);
     }
@@ -405,5 +437,6 @@ mod tests {
         let parsed: AppConfig = serde_json::from_str(json).unwrap();
         assert!(!parsed.autostart);
         assert!(parsed.preferred_ips.is_empty());
+        assert!(parsed.continuous_mode); // 缺失字段默认 true
     }
 }

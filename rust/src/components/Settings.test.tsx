@@ -25,9 +25,14 @@ describe('Settings', () => {
   ]
 
   const mockConfig: AppConfig = {
+    check_interval: 120,
+    slow_threshold: 150,
+    failure_threshold: 5,
+    test_count: 3,
     endpoints: mockEndpoints,
     autostart: false,
     preferred_ips: [],
+    continuous_mode: true,
   }
 
   const defaultProps = {

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { CheckCircle2, Zap, Globe, Link2, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download, CloudDownload } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
-import { Endpoint, EndpointResult, Progress, AppConfig } from '../types'
+import { Endpoint, EndpointResult, AppConfig } from '../types'
 import { ImportEndpointsDialog } from './ImportEndpointsDialog'
 
 // 可复制文本组件
@@ -39,10 +39,10 @@ interface DashboardProps {
   endpoints: Endpoint[]
   results: EndpointResult[]
   isRunning: boolean
-  progress: Progress
   bindingCount: number
   testingDomains: Set<string>
   config: AppConfig | null
+  isOptimizing?: boolean
   onApply: (result: EndpointResult) => void
   onApplyAll: () => void
   onUnbindAll: () => void
@@ -58,10 +58,10 @@ export function Dashboard({
   endpoints,
   results,
   isRunning,
-  progress: _progress,
   bindingCount,
   testingDomains,
   config,
+  isOptimizing,
   onApply,
   onApplyAll,
   onUnbindAll,
@@ -203,6 +203,12 @@ export function Dashboard({
           <CompactStatus icon={<Globe className="w-4 h-4" />} label="已测" value={testedCount} color="blue" />
           <CompactStatus icon={<CheckCircle2 className="w-4 h-4" />} label="可用" value={availableCount} color="green" />
           <CompactStatus icon={<Link2 className="w-4 h-4" />} label="绑定" value={bindingCount} color="orange" />
+          {isOptimizing && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-apple-green/10 rounded-lg">
+              <div className="w-1.5 h-1.5 bg-apple-green rounded-full animate-pulse" />
+              <span className="text-xs text-apple-green">持续优化中</span>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -218,7 +224,7 @@ export function Dashboard({
             <ListFilter className="w-4 h-4" />
             优选 IP
             {hasPreferredIps && (
-              <span className="text-xs opacity-70">({config!.preferred_ips.length})</span>
+              <span className="text-xs opacity-70">({config?.preferred_ips.length})</span>
             )}
           </button>
           {/* 全局测速 */}
@@ -368,7 +374,7 @@ export function Dashboard({
         <div className="flex flex-wrap gap-2">
           {endpoints.map((endpoint, index) => (
             <div
-              key={index}
+              key={endpoint.domain}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs transition-colors ${
                 endpoint.enabled
                   ? 'bg-apple-blue/10 text-apple-blue'

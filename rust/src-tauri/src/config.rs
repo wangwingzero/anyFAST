@@ -44,8 +44,13 @@ impl ConfigManager {
     pub fn load(&self) -> Result<AppConfig, ConfigError> {
         if self.path.exists() {
             let content = fs::read_to_string(&self.path)?;
-            let config: AppConfig = serde_json::from_str(&content)?;
-            Ok(config)
+            match serde_json::from_str(&content) {
+                Ok(config) => Ok(config),
+                Err(e) => {
+                    eprintln!("配置文件损坏，使用默认配置: {}", e);
+                    Ok(AppConfig::default())
+                }
+            }
         } else {
             Ok(AppConfig::default())
         }
@@ -118,15 +123,17 @@ mod tests {
     }
 
     #[test]
-    fn test_config_error_invalid_json() {
+    fn test_config_fallback_on_invalid_json() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("config.json");
 
         fs::write(&config_path, "not valid json").unwrap();
 
         let manager = ConfigManager::with_path(config_path);
-        let result = manager.load();
+        let config = manager.load().unwrap();
 
-        assert!(result.is_err());
+        // Should fall back to default config instead of erroring
+        assert_eq!(config.check_interval, 120);
+        assert_eq!(config.endpoints.len(), 2);
     }
 }

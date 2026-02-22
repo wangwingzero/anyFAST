@@ -3,6 +3,10 @@ import type { AppConfig, EndpointResult, HistoryStats } from '../../types'
 
 // Default mock config
 export const mockConfig: AppConfig = {
+  check_interval: 120,
+  slow_threshold: 150,
+  failure_threshold: 5,
+  test_count: 3,
   endpoints: [
     {
       name: 'Test Endpoint 1',
@@ -19,6 +23,7 @@ export const mockConfig: AppConfig = {
   ],
   autostart: false,
   preferred_ips: [],
+  continuous_mode: true,
 }
 
 // Mock endpoint results
@@ -130,7 +135,9 @@ export async function createMockInvoke(overrides: Record<string, unknown>) {
       }
       return override
     }
-    return (await setupMockInvoke()).mockImplementation
+    // Fall back to default mock behavior
+    const baseMock = await setupMockInvoke()
+    return baseMock(cmd, _args as Record<string, unknown>)
   })
 
   return invoke

@@ -408,10 +408,49 @@ jobs:
               }
             }' > latest.json
 
-      - name: Upload latest.json
+      - name: Generate latest-cn.json for Chinese users (proxy download URLs)
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          # Re-read variables from latest.json
+          WIN_SIG=$(jq -r '.platforms."windows-x86_64".signature' latest.json)
+          WIN_URL_RAW=$(jq -r '.platforms."windows-x86_64".url' latest.json)
+          RELEASE_DATE=$(jq -r '.pub_date' latest.json)
+
+          # Prefix download URL with ghproxy.net proxy
+          WIN_URL_CN="https://ghproxy.net/${WIN_URL_RAW}"
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "Release v$VERSION" \
+            --arg pub_date "$RELEASE_DATE" \
+            --arg win_sig "$WIN_SIG" \
+            --arg win_url "$WIN_URL_CN" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64": {
+                  signature: $win_sig,
+                  url: $win_url
+                },
+                "windows-x86_64-nsis": {
+                  signature: $win_sig,
+                  url: $win_url
+                },
+                "windows-x86_64-msi": {
+                  signature: $win_sig,
+                  url: $win_url
+                }
+              }
+            }' > latest-cn.json
+
+      - name: Upload latest.json and latest-cn.json
         uses: softprops/action-gh-release@v2
         with:
-          files: latest.json
+          files: |
+            latest.json
+            latest-cn.json
       
       - name: Publish Release
         uses: softprops/action-gh-release@v2
