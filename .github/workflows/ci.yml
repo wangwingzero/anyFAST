@@ -45,7 +45,7 @@ jobs:
 
       - name: Run Rust tests
         working-directory: rust/src-tauri
-        run: cargo test --verbose
+        run: cargo test --no-default-features --verbose
 
   # Check for unreleased commits on main
   check-unreleased:

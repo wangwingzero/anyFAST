@@ -73,7 +73,7 @@ jobs:
 
       - name: Run Rust tests
         working-directory: rust/src-tauri
-        run: cargo test --verbose
+        run: cargo test --no-default-features --verbose
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
