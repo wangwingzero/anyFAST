@@ -19,6 +19,8 @@ pub struct EndpointResult {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     // 新增字段: 加速百分比显示 + 智能回退
     #[serde(default)]
     pub original_ip: String,
@@ -39,6 +41,7 @@ impl EndpointResult {
             ttfb: latency,
             success: true,
             error: None,
+            warning: None,
             original_ip: String::new(),
             original_latency: 0.0,
             speedup_percent: 0.0,
@@ -71,6 +74,7 @@ impl EndpointResult {
             ttfb: latency,
             success: true,
             error: None,
+            warning: None,
             original_ip,
             original_latency,
             speedup_percent,
@@ -86,6 +90,7 @@ impl EndpointResult {
             ttfb: 9999.0,
             success: false,
             error: Some(error),
+            warning: None,
             original_ip: String::new(),
             original_latency: 0.0,
             speedup_percent: 0.0,
@@ -186,8 +191,8 @@ fn default_endpoints() -> Vec<Endpoint> {
     vec![
         Endpoint {
             name: "anyrouter".into(),
-            url: "https://betterclau.de/claude/anyrouter.top".into(),
-            domain: "betterclau.de".into(),
+            url: "https://cf.betterclau.de/claude/anyrouter.top".into(),
+            domain: "cf.betterclau.de".into(),
             enabled: true,
         },
         Endpoint {

@@ -248,4 +248,30 @@ describe('Dashboard', () => {
 
     expect(screen.getByText('5')).toBeInTheDocument()
   })
+
+  it('shows warning icon when result has warning', () => {
+    const warningResult: EndpointResult = {
+      endpoint: mockEndpoints[0],
+      ip: '5.6.7.8',
+      latency: 200,
+      ttfb: 200,
+      success: true,
+      warning: '优选IP全部失败，已回退至DNS默认IP。该域名非Cloudflare域名，CF优选IP不适用',
+      original_ip: '5.6.7.8',
+      original_latency: 200,
+      speedup_percent: 0,
+      use_original: true,
+    }
+
+    render(<Dashboard {...defaultProps} results={[warningResult]} />)
+
+    const warningIcon = screen.getByTitle('优选IP全部失败，已回退至DNS默认IP。该域名非Cloudflare域名，CF优选IP不适用')
+    expect(warningIcon).toBeInTheDocument()
+  })
+
+  it('does not show warning icon when result has no warning', () => {
+    render(<Dashboard {...defaultProps} results={mockResults} />)
+
+    expect(screen.queryByTitle(/优选IP全部失败/)).not.toBeInTheDocument()
+  })
 })

@@ -625,6 +625,12 @@ function LatencyComparison({ result, isTesting }: { result: EndpointResult; isTe
           0%
         </span>
       )}
+      {/* 优选 IP 回退警告 */}
+      {result.warning && (
+        <span title={result.warning} className="inline-flex items-center cursor-help">
+          <AlertTriangle className="w-3.5 h-3.5 text-apple-orange" />
+        </span>
+      )}
     </span>
   )
 }

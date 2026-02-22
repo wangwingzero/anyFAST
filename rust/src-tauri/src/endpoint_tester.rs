@@ -633,13 +633,25 @@ impl EndpointTester {
                 original_result.ip,
                 original_result.latency
             );
-            EndpointResult::success_with_comparison(
+            let mut result = EndpointResult::success_with_comparison(
                 endpoint.clone(),
                 original_result.ip.clone(),
                 original_result.latency,
-                original_ip,
+                original_ip.clone(),
                 original_latency,
-            )
+            );
+
+            // 用户设置了优选 IP 白名单但全部失败，设置警告
+            if !self.custom_cf_ips.is_empty() {
+                let mut warning = "优选IP全部失败，已回退至DNS默认IP".to_string();
+                if !is_cf {
+                    warning.push_str("。该域名非Cloudflare域名，CF优选IP不适用");
+                }
+                warn_log!("  端点 {} 警告: {}", endpoint.name, warning);
+                result.warning = Some(warning);
+            }
+
+            result
         } else {
             error_log!("  端点 {} 全部失败", endpoint.name);
             EndpointResult::failure(endpoint.clone(), original_ip, "全部超时".into())

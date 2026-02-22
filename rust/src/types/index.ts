@@ -12,6 +12,7 @@ export interface EndpointResult {
   ttfb: number
   success: boolean
   error?: string
+  warning?: string
   original_ip: string
   original_latency: number
   speedup_percent: number
