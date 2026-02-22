@@ -1,7 +1,9 @@
 //! Endpoint speed tester with Cloudflare IP optimization
 
 use crate::models::{Endpoint, EndpointResult, TestProgressEvent, TestProgressEventType};
-use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+use hickory_resolver::config::{
+    LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts,
+};
 use hickory_resolver::TokioAsyncResolver;
 use rand::seq::SliceRandom;
 use rand::Rng;
@@ -70,9 +72,11 @@ const MAX_ENDPOINT_CONCURRENCY: usize = 3;
 /// Max concurrent IP tests within one endpoint
 const MAX_IP_CONCURRENCY_PER_ENDPOINT: usize = 4;
 /// DNS lookup timeout for each endpoint
-const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Timeout for a single IP test
 const SINGLE_IP_TEST_TIMEOUT: Duration = Duration::from_secs(8);
+/// Timeout for TCP-only probe (fast fail detection)
+const TCP_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Total timeout for all IP tests within one endpoint
 const IP_TEST_TOTAL_TIMEOUT: Duration = Duration::from_secs(45);
 /// End-to-end workflow timeout bounds (used for dynamic estimation)
@@ -106,6 +110,14 @@ pub fn estimate_test_timeout(endpoint_count: usize) -> Duration {
     ))
 }
 
+/// 主 DNS 解析器列表（国内 DNS 优先，降低境外域名解析延迟）
+const PRIMARY_DNS_SERVERS: &[&str] = &[
+    "223.5.5.5",    // AliDNS
+    "223.6.6.6",    // AliDNS
+    "119.29.29.29", // DNSPod
+    "8.8.8.8",      // Google (fallback)
+];
+
 /// 公共 DNS 解析器列表（用于非 CF 站点的多 DNS 优选）
 const PUBLIC_DNS_SERVERS: &[&str] = &[
     "8.8.8.8",        // Google
@@ -130,6 +142,35 @@ const CF_RANGES: &[&str] = &[
 /// Check if an IP is in Cloudflare's range
 pub fn is_cloudflare_ip(ip: &str) -> bool {
     CF_RANGES.iter().any(|r| ip.starts_with(r))
+}
+
+/// IP 测试错误分类
+#[derive(Debug, Clone, PartialEq)]
+enum IpTestErrorCategory {
+    /// TCP 连接超时（网络不可达）
+    NetworkTimeout,
+    /// TCP 连接被拒绝（端口关闭等）
+    NetworkRefused,
+    /// Cloudflare 风控拦截（403/429）
+    CfBlocked,
+    /// 其他错误
+    Other,
+}
+
+/// 根据错误字符串分类错误类型
+fn categorize_error(error: &str) -> IpTestErrorCategory {
+    if error.starts_with("TCP_TIMEOUT:") || error.contains("timed out") || error.contains("超时")
+    {
+        IpTestErrorCategory::NetworkTimeout
+    } else if error.starts_with("TCP_REFUSED:") || error.contains("refused") {
+        IpTestErrorCategory::NetworkRefused
+    } else if error.starts_with("CF_BLOCKED:") {
+        IpTestErrorCategory::CfBlocked
+    } else if error.starts_with("TCP_RESET:") || error.contains("reset") {
+        IpTestErrorCategory::NetworkRefused
+    } else {
+        IpTestErrorCategory::Other
+    }
 }
 
 /// Merge candidate IPs in stable order and deduplicate.
@@ -276,10 +317,23 @@ impl EndpointTester {
 
         let tls_connector = TlsConnector::from(Arc::new(config));
 
-        // Pre-create DNS resolver with caching
+        // Pre-create DNS resolver with domestic DNS servers for faster resolution
+        let mut name_servers = Vec::new();
+        for &dns_ip in PRIMARY_DNS_SERVERS {
+            let addr: std::net::IpAddr = dns_ip.parse().unwrap();
+            name_servers.push(NameServerConfig::new(
+                SocketAddr::new(addr, 53),
+                Protocol::Udp,
+            ));
+        }
+        let config = ResolverConfig::from_parts(None, vec![], name_servers);
         let mut opts = ResolverOpts::default();
-        opts.cache_size = 128;
-        let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), opts);
+        opts.cache_size = 1024;
+        opts.timeout = Duration::from_secs(2);
+        opts.attempts = 2;
+        opts.validate = false; // 关闭 DNSSEC，避免 AliDNS 兼容问题
+        opts.ip_strategy = LookupIpStrategy::Ipv4thenIpv6;
+        let resolver = TokioAsyncResolver::tokio(config, opts);
 
         // Clamp test rounds to 1..=5
         let test_rounds = test_rounds.clamp(1, 5);
@@ -344,6 +398,43 @@ impl EndpointTester {
 
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    /// TCP-only 探测：仅建立 TCP 连接到 443 端口，不做 TLS/HTTP
+    /// 用于快速判断 IP 是否网络可达
+    async fn tcp_probe(ip: &str) -> Result<Duration, String> {
+        let addr: SocketAddr = format!("{}:443", ip)
+            .parse()
+            .map_err(|e| format!("Invalid IP: {}", e))?;
+
+        let socket = if addr.is_ipv4() {
+            TcpSocket::new_v4()
+        } else {
+            TcpSocket::new_v6()
+        }
+        .map_err(|e| format!("Socket: {}", e))?;
+        socket.set_reuseaddr(true).ok();
+
+        let start = Instant::now();
+        match tokio::time::timeout(TCP_PROBE_TIMEOUT, socket.connect(addr)).await {
+            Ok(Ok(stream)) => {
+                let elapsed = start.elapsed();
+                // 正常关闭连接
+                drop(stream);
+                Ok(elapsed)
+            }
+            Ok(Err(e)) => {
+                let kind = e.kind();
+                match kind {
+                    std::io::ErrorKind::TimedOut => Err(format!("TCP_TIMEOUT: {}", e)),
+                    std::io::ErrorKind::ConnectionRefused => Err(format!("TCP_REFUSED: {}", e)),
+                    std::io::ErrorKind::ConnectionReset => Err(format!("TCP_RESET: {}", e)),
+                    std::io::ErrorKind::ConnectionAborted => Err(format!("TCP_RESET: {}", e)),
+                    _ => Err(format!("TCP: {}", e)),
+                }
+            }
+            Err(_) => Err("TCP_TIMEOUT: 探测超时".into()),
+        }
     }
 
     #[allow(dead_code)]
@@ -800,8 +891,129 @@ impl EndpointTester {
 
         debug_log!("  准备测试 {} 个 IP", test_ips.len());
 
-        // 打乱候选 IP 顺序，避免每次以相同顺序访问 CF 边缘节点（降低被识别为扫描行为的概率）
+        // TCP 预探测：当原始 IP 失败时，先快速检测候选 IP 的 TCP 连通性
         let mut test_ips = test_ips;
+        if !original_result.success && !test_ips.is_empty() {
+            debug_log!("  原始IP失败，启动TCP预探测 ({} 个候选IP)", test_ips.len());
+            self.emit_progress(
+                TestProgressEventType::TcpProbeStarted,
+                "info",
+                Some(&endpoint.name),
+                format!(
+                    "[{}] 原始IP不可用，TCP预探测 {} 个候选IP...",
+                    endpoint.name,
+                    test_ips.len()
+                ),
+            );
+
+            let probe_start = Instant::now();
+            let mut probe_set = JoinSet::new();
+            for ip in test_ips.iter() {
+                let ip_clone = ip.clone();
+                probe_set.spawn(async move {
+                    let result = Self::tcp_probe(&ip_clone).await;
+                    (ip_clone, result)
+                });
+            }
+
+            // 收集预探测结果（总超时 5s）
+            let mut reachable_ips = Vec::new();
+            let mut _probe_fail_count: usize = 0;
+            let probe_deadline = Duration::from_secs(5);
+            loop {
+                let remaining = probe_deadline.saturating_sub(probe_start.elapsed());
+                if remaining.is_zero() {
+                    probe_set.abort_all();
+                    break;
+                }
+                match tokio::time::timeout(remaining, probe_set.join_next()).await {
+                    Ok(Some(Ok((ip, Ok(dur))))) => {
+                        debug_log!(
+                            "    TCP探测 {} 可达 ({:.0}ms)",
+                            ip,
+                            dur.as_secs_f64() * 1000.0
+                        );
+                        reachable_ips.push(ip);
+                    }
+                    Ok(Some(Ok((ip, Err(e))))) => {
+                        debug_log!("    TCP探测 {} 失败: {}", ip, e);
+                        _probe_fail_count += 1;
+                    }
+                    Ok(Some(Err(_))) => {
+                        _probe_fail_count += 1;
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        probe_set.abort_all();
+                        break;
+                    }
+                }
+            }
+
+            let probe_elapsed = probe_start.elapsed();
+            debug_log!(
+                "  TCP预探测完成: {}/{} 可达 ({:.1}s)",
+                reachable_ips.len(),
+                test_ips.len(),
+                probe_elapsed.as_secs_f64()
+            );
+
+            self.emit_progress(
+                TestProgressEventType::TcpProbeComplete,
+                if reachable_ips.is_empty() {
+                    "warning"
+                } else {
+                    "info"
+                },
+                Some(&endpoint.name),
+                format!(
+                    "[{}] TCP预探测: {}/{} 可达 ({:.1}s)",
+                    endpoint.name,
+                    reachable_ips.len(),
+                    test_ips.len(),
+                    probe_elapsed.as_secs_f64()
+                ),
+            );
+
+            if reachable_ips.is_empty() {
+                // 全部不可达 → 快速失败
+                warn_log!(
+                    "  [{}] TCP预探测全部失败 ({}个IP)，网络不可达",
+                    endpoint.name,
+                    test_ips.len()
+                );
+                self.emit_progress(
+                    TestProgressEventType::NetworkUnreachable,
+                    "error",
+                    Some(&endpoint.name),
+                    format!("[{}] 所有候选IP TCP不可达，请检查网络连接", endpoint.name),
+                );
+                let result = EndpointResult::failure(
+                    endpoint.clone(),
+                    original_ip,
+                    "网络不可达: 所有候选IP TCP连接失败".into(),
+                );
+                self.emit_progress(
+                    TestProgressEventType::EndpointComplete,
+                    "error",
+                    Some(&endpoint.name),
+                    format!("[{}] 失败: 网络不可达", endpoint.name),
+                );
+                return result;
+            }
+
+            // 部分可达 → 仅对 TCP 可达的 IP 执行 HTTPS 测试
+            if reachable_ips.len() < test_ips.len() {
+                debug_log!(
+                    "  过滤不可达IP: {} → {} 个",
+                    test_ips.len(),
+                    reachable_ips.len()
+                );
+            }
+            test_ips = reachable_ips;
+        }
+
+        // 打乱候选 IP 顺序，避免每次以相同顺序访问 CF 边缘节点（降低被识别为扫描行为的概率）
         test_ips.shuffle(&mut rand::thread_rng());
 
         // Test all IPs concurrently with timeout
@@ -826,12 +1038,14 @@ impl EndpointTester {
             });
         }
 
-        // Collect results with 15s total timeout for all IP tests
+        // Collect results with total timeout for all IP tests
         let mut best_result: Option<EndpointResult> = None;
         let ip_test_start = Instant::now();
         let ip_test_timeout = IP_TEST_TOTAL_TIMEOUT;
         let mut ip_success_count: usize = 0;
         let mut ip_tested_count: usize = 0;
+        let mut timeout_count: usize = 0;
+        let mut cf_blocked_count: usize = 0;
 
         loop {
             // 检查总超时
@@ -870,34 +1084,66 @@ impl EndpointTester {
                             debug_log!("    IP {} 延迟 {:.0}ms", result.ip, result.latency);
                         }
                     } else {
-                        debug_log!(
-                            "    IP {} 失败: {}",
-                            result.ip,
-                            result.error.as_deref().unwrap_or("unknown")
-                        );
+                        let err_msg = result.error.as_deref().unwrap_or("unknown");
+                        debug_log!("    IP {} 失败: {}", result.ip, err_msg);
+                        // 分类统计错误
+                        match categorize_error(err_msg) {
+                            IpTestErrorCategory::NetworkTimeout => timeout_count += 1,
+                            IpTestErrorCategory::NetworkRefused => timeout_count += 1,
+                            IpTestErrorCategory::CfBlocked => cf_blocked_count += 1,
+                            IpTestErrorCategory::Other => {}
+                        }
                     }
 
-                    // CF 封锁检测：已测试 ≥5 个 IP && 成功率 < 20% && 是 CF 站点
-                    if is_cf && ip_tested_count >= 5 && ip_success_count * 5 < ip_tested_count {
-                        warn_log!(
-                            "  [{}] 检测到CF风控: {}/{} IP 成功 ({:.0}%)，中止剩余候选IP",
-                            endpoint.name,
-                            ip_success_count,
-                            ip_tested_count,
-                            ip_success_count as f64 / ip_tested_count as f64 * 100.0
-                        );
-                        self.cf_throttled.store(true, Ordering::SeqCst);
-                        self.emit_progress(
-                            TestProgressEventType::CfThrottleDetected,
-                            "warning",
-                            Some(&endpoint.name),
-                            format!(
-                                "[{}] 检测到CF风控，跳过剩余候选IP ({}/{}成功)",
-                                endpoint.name, ip_success_count, ip_tested_count
-                            ),
-                        );
-                        join_set.abort_all();
-                        break;
+                    // 智能检测：已测试 ≥5 个 IP && 成功率 < 20%
+                    if ip_tested_count >= 5 && ip_success_count * 5 < ip_tested_count {
+                        let fail_count = ip_tested_count - ip_success_count;
+                        if cf_blocked_count > timeout_count
+                            && cf_blocked_count * 2 >= fail_count
+                            && is_cf
+                        {
+                            // CF 封锁占多数 → CF 风控逻辑
+                            warn_log!(
+                                "  [{}] 检测到CF风控: {}/{} IP 成功, {}个CF封锁",
+                                endpoint.name,
+                                ip_success_count,
+                                ip_tested_count,
+                                cf_blocked_count
+                            );
+                            self.cf_throttled.store(true, Ordering::SeqCst);
+                            self.emit_progress(
+                                TestProgressEventType::CfThrottleDetected,
+                                "warning",
+                                Some(&endpoint.name),
+                                format!(
+                                    "[{}] 检测到CF风控，跳过剩余候选IP ({}/{}成功)",
+                                    endpoint.name, ip_success_count, ip_tested_count
+                                ),
+                            );
+                            join_set.abort_all();
+                            break;
+                        } else if timeout_count * 2 >= fail_count {
+                            // 超时占多数 → 网络不可达
+                            warn_log!(
+                                "  [{}] 网络不可达: {}/{} IP 成功, {}个超时",
+                                endpoint.name,
+                                ip_success_count,
+                                ip_tested_count,
+                                timeout_count
+                            );
+                            self.emit_progress(
+                                TestProgressEventType::NetworkUnreachable,
+                                "warning",
+                                Some(&endpoint.name),
+                                format!(
+                                    "[{}] 候选IP大面积超时，可能网络不可达 ({}/{}成功)",
+                                    endpoint.name, ip_success_count, ip_tested_count
+                                ),
+                            );
+                            // 注意：不设置 cf_throttled 标志
+                            join_set.abort_all();
+                            break;
+                        }
                     }
                 }
                 Ok(Some(Err(e))) => {
@@ -1044,16 +1290,22 @@ impl EndpointTester {
                 Ok(Ok(latency)) => {
                     latencies.push(latency);
                 }
-                Ok(Err(_)) | Err(_) => {
-                    // 首轮失败直接放弃（IP 大概率不可达）
+                Ok(Err(e)) => {
+                    // 首轮失败直接放弃（IP 大概率不可达），保留原始错误信息
+                    if round == 0 {
+                        return EndpointResult::failure(endpoint.clone(), ip, e);
+                    }
+                    // 后续轮次失败忽略，用已有数据
+                }
+                Err(_) => {
+                    // 超时
                     if round == 0 {
                         return EndpointResult::failure(
                             endpoint.clone(),
                             ip,
-                            "首轮测试失败".into(),
+                            "TCP_TIMEOUT: 测试超时".into(),
                         );
                     }
-                    // 后续轮次失败忽略，用已有数据
                 }
             }
         }
@@ -1084,10 +1336,16 @@ impl EndpointTester {
         }
         .map_err(|e| format!("Socket: {}", e))?;
         socket.set_reuseaddr(true).ok();
-        let stream = socket
-            .connect(addr)
-            .await
-            .map_err(|e| format!("TCP: {}", e))?;
+        let stream = socket.connect(addr).await.map_err(|e| {
+            let kind = e.kind();
+            match kind {
+                std::io::ErrorKind::TimedOut => format!("TCP_TIMEOUT: {}", e),
+                std::io::ErrorKind::ConnectionRefused => format!("TCP_REFUSED: {}", e),
+                std::io::ErrorKind::ConnectionReset => format!("TCP_RESET: {}", e),
+                std::io::ErrorKind::ConnectionAborted => format!("TCP_RESET: {}", e),
+                _ => format!("TCP: {}", e),
+            }
+        })?;
 
         // TLS handshake using reusable connector
         let connector = self.tls_connector.clone();
@@ -1134,9 +1392,17 @@ impl EndpointTester {
         // causing subsequent tests to fail with timeouts.
         let _ = tls_stream.shutdown().await;
 
-        // Verify HTTP response
+        // Verify HTTP response and check for CF blocking
         let response = String::from_utf8_lossy(&buf[..n]);
         if response.starts_with("HTTP/") {
+            // 解析状态码，检测 CF 风控
+            if let Some(status_str) = response.get(9..12) {
+                if let Ok(status) = status_str.trim().parse::<u16>() {
+                    if status == 403 || status == 429 {
+                        return Err(format!("CF_BLOCKED: HTTP {}", status));
+                    }
+                }
+            }
             Ok(latency)
         } else {
             Err("Invalid response".into())

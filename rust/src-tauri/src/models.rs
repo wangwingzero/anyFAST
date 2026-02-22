@@ -225,6 +225,9 @@ pub enum TestProgressEventType {
     OriginalIpTested,
     CandidateTestComplete,
     CfThrottleDetected,
+    NetworkUnreachable,
+    TcpProbeStarted,
+    TcpProbeComplete,
     EndpointComplete,
     TestFinished,
 }
