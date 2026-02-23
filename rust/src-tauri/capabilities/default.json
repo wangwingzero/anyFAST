@@ -8,6 +8,8 @@
     "shell:allow-open",
     "process:allow-restart",
     "process:allow-exit",
-    "updater:default"
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download-and-install"
   ]
 }
