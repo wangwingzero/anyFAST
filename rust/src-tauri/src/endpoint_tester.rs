@@ -304,8 +304,8 @@ impl EndpointTester {
     pub fn new(custom_cf_ips: Vec<String>, test_rounds: u32) -> Self {
         // Use native TLS (Schannel on Windows, Security Framework on macOS)
         // for authentic OS-level TLS fingerprints instead of rustls's identifiable JA3
-        let native_connector = native_tls::TlsConnector::new()
-            .expect("Failed to create native TLS connector");
+        let native_connector =
+            native_tls::TlsConnector::new().expect("Failed to create native TLS connector");
         let tls_connector = TlsConnector::from(native_connector);
 
         // Pre-create DNS resolver with domestic DNS servers for faster resolution
@@ -1430,14 +1430,20 @@ impl EndpointTester {
                     } else if status >= 400 {
                         debug_log!(
                             "  [HTTP] {} -> {} | HTTP {} | latency={:.0}ms | server={} | cf-ray={}",
-                            endpoint.domain, ip, status, latency,
+                            endpoint.domain,
+                            ip,
+                            status,
+                            latency,
                             server.as_deref().unwrap_or("-"),
                             cf_ray.as_deref().unwrap_or("-"),
                         );
                     } else {
                         debug_log!(
                             "  [HTTP] {} -> {} | HTTP {} | latency={:.0}ms | cf-ray={}",
-                            endpoint.domain, ip, status, latency,
+                            endpoint.domain,
+                            ip,
+                            status,
+                            latency,
                             cf_ray.as_deref().unwrap_or("-"),
                         );
                     }

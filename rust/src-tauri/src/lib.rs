@@ -768,8 +768,7 @@ async fn check_for_update() -> Result<UpdateInfo, String> {
                             .trim_start_matches('v')
                             .to_string();
 
-                        let release_notes =
-                            release["body"].as_str().unwrap_or("").to_string();
+                        let release_notes = release["body"].as_str().unwrap_or("").to_string();
                         let release_url = release["html_url"]
                             .as_str()
                             .unwrap_or(&format!(
@@ -780,8 +779,7 @@ async fn check_for_update() -> Result<UpdateInfo, String> {
                         let published_at =
                             release["published_at"].as_str().unwrap_or("").to_string();
 
-                        let has_update =
-                            compare_versions(&latest_version, CURRENT_VERSION);
+                        let has_update = compare_versions(&latest_version, CURRENT_VERSION);
 
                         return Ok(UpdateInfo {
                             current_version: CURRENT_VERSION.to_string(),

@@ -6,12 +6,12 @@ use crate::endpoint_tester::EndpointTester;
 use crate::hosts_manager::HostsBinding;
 use crate::hosts_ops;
 use crate::models::{Endpoint, EndpointResult, OptimizationEvent, OptimizationEventType};
+use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 #[cfg(feature = "tauri-runtime")]
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
-use rand::Rng;
 use tokio_util::sync::CancellationToken;
 
 /// 基准延迟跟踪器
