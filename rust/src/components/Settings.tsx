@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2, Github, Star, AlertCircle, Repeat } from 'lucide-react'
-import { Endpoint, AppConfig, UpdateInfo } from '../types'
+import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2, Github, Star, AlertCircle, Repeat, Search, XCircle } from 'lucide-react'
+import { Endpoint, AppConfig, UpdateInfo, DiagnosticStep } from '../types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 import { check, type Update } from '@tauri-apps/plugin-updater'
@@ -46,6 +46,10 @@ export function Settings({
   const updateRef = useRef<Update | null>(null)
   // 降级方案：Rust 侧检测到的更新信息（当 Tauri updater 插件失败时使用）
   const [fallbackUpdateInfo, setFallbackUpdateInfo] = useState<UpdateInfo | null>(null)
+
+  // 更新排查诊断
+  const [diagnosing, setDiagnosing] = useState(false)
+  const [diagnosticSteps, setDiagnosticSteps] = useState<DiagnosticStep[] | null>(null)
 
   // 自启动状态
   const [autostart, setAutostart] = useState(config?.autostart ?? false)
@@ -126,6 +130,7 @@ export function Settings({
     setUpdateChecked(false)
     updateRef.current = null
     setFallbackUpdateInfo(null)
+    setDiagnosticSteps(null)
     try {
       const update = await check({ timeout: 15000 })
       if (update) {
@@ -216,6 +221,24 @@ export function Settings({
       return '网络连接异常，可能是代理设置或防火墙导致。请检查网络后重试，或直接到 GitHub 下载。'
     }
     return null
+  }
+
+  // 执行更新排查诊断
+  const runDiagnostic = async () => {
+    setDiagnosing(true)
+    setDiagnosticSteps(null)
+    try {
+      const steps = await invoke<DiagnosticStep[]>('diagnose_update')
+      setDiagnosticSteps(steps)
+    } catch (e) {
+      setDiagnosticSteps([{
+        name: '排查失败',
+        status: 'error' as const,
+        detail: String(e),
+      }])
+    } finally {
+      setDiagnosing(false)
+    }
   }
 
   const restoreAllDefaults = async () => {
@@ -379,13 +402,44 @@ export function Settings({
                   const hint = getUpdateErrorHint(updateError)
                   return hint && <p className="text-xs text-red-500 mb-2">{hint}</p>
                 })()}
-                <button
-                  onClick={openReleasePage}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-red-600 hover:text-red-700 hover:underline transition-colors"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  前往 GitHub 手动下载
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={runDiagnostic}
+                    disabled={diagnosing}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors disabled:opacity-50"
+                  >
+                    <Search className={`w-3 h-3 ${diagnosing ? 'animate-spin' : ''}`} />
+                    {diagnosing ? '排查中...' : '排查原因'}
+                  </button>
+                  <button
+                    onClick={openReleasePage}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-red-600 hover:text-red-700 hover:underline transition-colors"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    前往 GitHub 手动下载
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 排查诊断结果 */}
+            {diagnosticSteps && (
+              <div className="p-3 bg-apple-gray-50 border border-apple-gray-200 rounded-xl space-y-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <Search className="w-4 h-4 text-apple-blue" />
+                  <span className="text-sm font-medium text-apple-gray-600">更新排查结果</span>
+                </div>
+                {diagnosticSteps.map((step, i) => (
+                  <div key={i} className="flex items-start gap-2 text-xs">
+                    {step.status === 'ok' && <CheckCircle2 className="w-3.5 h-3.5 text-apple-green mt-0.5 flex-shrink-0" />}
+                    {step.status === 'warn' && <AlertCircle className="w-3.5 h-3.5 text-apple-orange mt-0.5 flex-shrink-0" />}
+                    {step.status === 'error' && <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />}
+                    <div>
+                      <span className="font-medium text-apple-gray-600">{step.name}: </span>
+                      <span className="text-apple-gray-500">{step.detail}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -504,6 +558,14 @@ export function Settings({
                     >
                       <ExternalLink className="w-4 h-4" />
                       前往下载
+                    </button>
+                    <button
+                      onClick={runDiagnostic}
+                      disabled={diagnosing}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-apple-gray-500 text-sm font-medium rounded-xl hover:bg-apple-gray-100 transition-colors disabled:opacity-50"
+                    >
+                      <Search className={`w-4 h-4 ${diagnosing ? 'animate-spin' : ''}`} />
+                      {diagnosing ? '排查中...' : '排查原因'}
                     </button>
                   </div>
                 </div>

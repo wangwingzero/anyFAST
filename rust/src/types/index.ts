@@ -67,6 +67,14 @@ export interface PermissionStatus {
   isUsingService: boolean
 }
 
+// ===== 更新排查诊断 =====
+
+export interface DiagnosticStep {
+  name: string
+  status: 'ok' | 'warn' | 'error'
+  detail: string
+}
+
 // ===== 更新相关类型 =====
 
 export interface UpdateInfo {

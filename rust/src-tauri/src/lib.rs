@@ -22,7 +22,8 @@ use health_checker::{BaselineTracker, HealthChecker};
 use history::HistoryManager;
 use hosts_manager::HostsBinding;
 use models::{
-    AppConfig, Endpoint, EndpointResult, HistoryRecord, HistoryStats, PermissionStatus, UpdateInfo,
+    AppConfig, DiagnosticStep, Endpoint, EndpointResult, HistoryRecord, HistoryStats,
+    PermissionStatus, UpdateInfo,
 };
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
@@ -739,20 +740,14 @@ const CURRENT_VERSION: &str = env!("APP_VERSION");
 // GitHub 仓库信息
 const GITHUB_REPO: &str = "wangwingzero/anyFAST";
 
-/// 检查更新（带 CDN 代理兜底）
+/// 检查更新（直连 GitHub）
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn check_for_update() -> Result<UpdateInfo, String> {
-    let urls = [
-        format!(
-            "https://api.github.com/repos/{}/releases/latest",
-            GITHUB_REPO
-        ),
-        format!(
-            "https://gh-proxy.com/https://api.github.com/repos/{}/releases/latest",
-            GITHUB_REPO
-        ),
-    ];
+    let urls = [format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    )];
 
     let client = reqwest::Client::builder()
         .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
@@ -837,6 +832,205 @@ fn compare_versions(latest: &str, current: &str) -> bool {
 #[tauri::command]
 fn get_current_version() -> String {
     CURRENT_VERSION.to_string()
+}
+
+/// 更新排查诊断：逐步检查更新链路中的各个环节
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn diagnose_update() -> Result<Vec<DiagnosticStep>, String> {
+    let mut steps = Vec::new();
+
+    let client = reqwest::Client::builder()
+        .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    // Step 1: 测试 GitHub API 连通性
+    let api_url = format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    );
+    match client.get(&api_url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            steps.push(DiagnosticStep {
+                name: "GitHub API 连接".into(),
+                status: "ok".into(),
+                detail: "成功连接到 api.github.com".into(),
+            });
+        }
+        Ok(resp) => {
+            steps.push(DiagnosticStep {
+                name: "GitHub API 连接".into(),
+                status: "error".into(),
+                detail: format!("API 返回 HTTP {}", resp.status()),
+            });
+        }
+        Err(e) => {
+            let detail = if e.is_timeout() {
+                "连接超时 — 请检查网络或是否需要 VPN/代理".to_string()
+            } else if e.is_connect() {
+                "无法建立连接 — 可能被防火墙或 DNS 拦截".to_string()
+            } else {
+                format!("请求失败: {}", e)
+            };
+            steps.push(DiagnosticStep {
+                name: "GitHub API 连接".into(),
+                status: "error".into(),
+                detail,
+            });
+        }
+    }
+
+    // Step 2: 测试 latest.json 更新端点
+    let updater_url = format!(
+        "https://github.com/{}/releases/latest/download/latest.json",
+        GITHUB_REPO
+    );
+    let latest_json_result = match client.get(&updater_url).send().await {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>().await {
+            Ok(json) => {
+                steps.push(DiagnosticStep {
+                    name: "latest.json 下载".into(),
+                    status: "ok".into(),
+                    detail: "成功下载更新元数据".into(),
+                });
+                Some(json)
+            }
+            Err(e) => {
+                steps.push(DiagnosticStep {
+                    name: "latest.json 下载".into(),
+                    status: "error".into(),
+                    detail: format!("解析 JSON 失败: {}", e),
+                });
+                None
+            }
+        },
+        Ok(resp) => {
+            steps.push(DiagnosticStep {
+                name: "latest.json 下载".into(),
+                status: "error".into(),
+                detail: format!(
+                    "HTTP {} — 可能尚未发布 latest.json 或 Release 不存在",
+                    resp.status()
+                ),
+            });
+            None
+        }
+        Err(e) => {
+            let detail = if e.is_timeout() {
+                "下载超时 — GitHub 可能暂时不可用或网络受限".to_string()
+            } else {
+                format!("下载失败: {}", e)
+            };
+            steps.push(DiagnosticStep {
+                name: "latest.json 下载".into(),
+                status: "error".into(),
+                detail,
+            });
+            None
+        }
+    };
+
+    // Step 3: 验证 latest.json 内容
+    if let Some(ref json) = latest_json_result {
+        let version = json["version"].as_str().unwrap_or("");
+        let has_windows = json["platforms"]["windows-x86_64"].is_object();
+        let url = json["platforms"]["windows-x86_64"]["url"]
+            .as_str()
+            .unwrap_or("");
+        let sig = json["platforms"]["windows-x86_64"]["signature"]
+            .as_str()
+            .unwrap_or("");
+
+        if version.is_empty() {
+            steps.push(DiagnosticStep {
+                name: "版本信息".into(),
+                status: "error".into(),
+                detail: "latest.json 中缺少 version 字段".into(),
+            });
+        } else {
+            let has_update = compare_versions(version, CURRENT_VERSION);
+            steps.push(DiagnosticStep {
+                name: "版本信息".into(),
+                status: if has_update { "ok" } else { "warn" }.into(),
+                detail: format!(
+                    "当前 v{} → 最新 v{} ({})",
+                    CURRENT_VERSION,
+                    version,
+                    if has_update {
+                        "有新版本可用"
+                    } else {
+                        "已是最新版本"
+                    }
+                ),
+            });
+        }
+
+        if !has_windows {
+            steps.push(DiagnosticStep {
+                name: "平台支持".into(),
+                status: "error".into(),
+                detail: "latest.json 中缺少 windows-x86_64 平台信息".into(),
+            });
+        } else {
+            if url.is_empty() {
+                steps.push(DiagnosticStep {
+                    name: "安装包 URL".into(),
+                    status: "error".into(),
+                    detail: "安装包下载 URL 为空".into(),
+                });
+            } else {
+                // 测试安装包 URL 可达性（HEAD 请求）
+                match client.head(url).send().await {
+                    Ok(resp)
+                        if resp.status().is_success()
+                            || resp.status().as_u16() == 302
+                            || resp.status().as_u16() == 301 =>
+                    {
+                        steps.push(DiagnosticStep {
+                            name: "安装包可达".into(),
+                            status: "ok".into(),
+                            detail: "安装包 URL 可正常访问".into(),
+                        });
+                    }
+                    Ok(resp) => {
+                        steps.push(DiagnosticStep {
+                            name: "安装包可达".into(),
+                            status: "error".into(),
+                            detail: format!(
+                                "安装包 URL 返回 HTTP {} — 文件可能未上传或已删除",
+                                resp.status()
+                            ),
+                        });
+                    }
+                    Err(e) => {
+                        steps.push(DiagnosticStep {
+                            name: "安装包可达".into(),
+                            status: "error".into(),
+                            detail: format!("无法访问安装包: {}", e),
+                        });
+                    }
+                }
+            }
+
+            if sig.is_empty() {
+                steps.push(DiagnosticStep {
+                    name: "签名验证".into(),
+                    status: "error".into(),
+                    detail: "签名字段为空 — 应用内更新需要有效签名才能安装".into(),
+                });
+            } else {
+                steps.push(DiagnosticStep {
+                    name: "签名验证".into(),
+                    status: "ok".into(),
+                    detail: "签名字段存在，验证将在下载后执行".into(),
+                });
+            }
+        }
+    }
+
+    Ok(steps)
 }
 
 // ===== 开机自启动命令 =====
@@ -1315,6 +1509,7 @@ pub fn run() {
             // 更新检查
             check_for_update,
             get_current_version,
+            diagnose_update,
             // 持续优化
             start_continuous_optimization,
             stop_continuous_optimization,

@@ -126,6 +126,15 @@ pub struct PermissionStatus {
     pub is_using_service: bool,
 }
 
+/// 更新排查诊断步骤
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticStep {
+    pub name: String,
+    pub status: String, // "ok", "warn", "error"
+    pub detail: String,
+}
+
 /// 更新信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -25,6 +25,17 @@ import { HistoryStats, HistoryRecord } from '../types'
 
 type TimeRange = 1 | 24 | 168 // 1 小时, 24 小时, 7 天 (168 小时)
 
+// 格式化累计节省时间（自动选择合适单位）
+const formatTimeSaved = (ms: number): string => {
+  if (ms <= 0) return '0s'
+  const seconds = ms / 1000
+  if (seconds < 60) return `${seconds.toFixed(1)}s`
+  const minutes = seconds / 60
+  if (minutes < 60) return `${minutes.toFixed(1)}min`
+  const hours = minutes / 60
+  return `${hours.toFixed(1)}h`
+}
+
 export function HistoryView() {
   const [stats, setStats] = useState<HistoryStats | null>(null)
   const [loading, setLoading] = useState(false)
@@ -136,7 +147,7 @@ export function HistoryView() {
           <StatCard
             icon={<Clock className="w-5 h-5" />}
             label="累计节省时间"
-            value={stats?.total_speedup_ms ? `${(stats.total_speedup_ms / 1000).toFixed(1)}s` : '0s'}
+            value={formatTimeSaved(stats?.total_speedup_ms ?? 0)}
             color="green"
           />
           <StatCard

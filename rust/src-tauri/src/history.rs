@@ -96,6 +96,9 @@ impl HistoryManager {
     pub fn get_stats(&self, hours: u32) -> Result<HistoryStats, HistoryError> {
         let records = self.load_records()?;
 
+        // 累计节省时间：使用全部记录计算（不受时间范围过滤，反映自启用以来的总效果）
+        let total_speedup_ms = Self::calculate_cumulative_speedup(&records);
+
         let cutoff = if hours > 0 {
             Self::now_timestamp() - (hours as i64 * 60 * 60)
         } else {
@@ -108,17 +111,15 @@ impl HistoryManager {
             .collect();
 
         if filtered.is_empty() {
-            return Ok(HistoryStats::default());
+            return Ok(HistoryStats {
+                total_tests: 0,
+                total_speedup_ms,
+                avg_speedup_percent: 0.0,
+                records: Vec::new(),
+            });
         }
 
         let total_tests = filtered.len() as u32;
-
-        // 计算累计节省的时间（只计算成功应用且有加速效果的）
-        let total_speedup_ms: f64 = filtered
-            .iter()
-            .filter(|r| r.applied && r.speedup_percent > 0.0)
-            .map(|r| r.original_latency - r.optimized_latency)
-            .sum();
 
         // 计算平均加速百分比
         let speedup_records: Vec<&HistoryRecord> = filtered
@@ -147,6 +148,44 @@ impl HistoryManager {
             avg_speedup_percent,
             records: recent_records,
         })
+    }
+
+    /// 计算累计节省时间（基于绑定持续时间的估算）
+    ///
+    /// 核心思路：每条 applied 记录表示"在该时刻，优化绑定有效"。
+    /// 在两次健康检查之间，所有经过中转站的流量都受益于优化后的延迟。
+    /// 按估算每秒约 0.1 个请求经过中转站（考虑活跃浏览和空闲时段的平均值）。
+    /// 超过 10 分钟没有新记录则视为空闲期，不计入。
+    fn calculate_cumulative_speedup(records: &[HistoryRecord]) -> f64 {
+        let mut applied: Vec<&HistoryRecord> = records
+            .iter()
+            .filter(|r| r.applied && r.speedup_percent > 0.0)
+            .collect();
+
+        if applied.is_empty() {
+            return 0.0;
+        }
+
+        applied.sort_by_key(|r| r.timestamp);
+
+        let now = Self::now_timestamp();
+        const REQUEST_RATE: f64 = 0.1; // 估算每秒 0.1 个请求
+        const MAX_INTERVAL: i64 = 600; // 最大计入 10 分钟
+
+        let mut total = 0.0;
+        for (i, r) in applied.iter().enumerate() {
+            let next_ts = if i + 1 < applied.len() {
+                applied[i + 1].timestamp
+            } else {
+                now
+            };
+            let interval = (next_ts - r.timestamp).clamp(0, MAX_INTERVAL) as f64;
+            let latency_diff = r.original_latency - r.optimized_latency;
+            if latency_diff > 0.0 {
+                total += latency_diff * interval * REQUEST_RATE;
+            }
+        }
+        total
     }
 
     /// 清理过期记录
