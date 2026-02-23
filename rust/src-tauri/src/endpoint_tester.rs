@@ -1179,22 +1179,52 @@ impl EndpointTester {
             );
         }
 
+        // 阈值：加速不超过 10% 视为无显著提升（正常网络抖动范围）
+        const SPEEDUP_THRESHOLD: f64 = 10.0;
+
         // 使用带比较功能的构造函数创建最终结果
         let final_result = if let Some(best) = best_result {
-            info_log!(
-                "  端点 {} 最优 IP: {} ({:.0}ms, 原 {:.0}ms)",
-                endpoint.name,
-                best.ip,
-                best.latency,
-                original_latency
-            );
-            EndpointResult::success_with_comparison(
-                endpoint.clone(),
-                best.ip,
-                best.latency,
-                original_ip,
-                original_latency,
-            )
+            // 计算加速百分比，判断是否显著
+            let speedup = if original_latency > 0.0 {
+                (original_latency - best.latency) / original_latency * 100.0
+            } else {
+                0.0
+            };
+
+            if speedup.abs() <= SPEEDUP_THRESHOLD && original_result.success {
+                // 加速不显著，回退使用原始 IP，诚实告知用户
+                info_log!(
+                    "  端点 {} 加速不显著 ({:.1}% ≤ {}%), 使用原始 IP: {}",
+                    endpoint.name,
+                    speedup,
+                    SPEEDUP_THRESHOLD,
+                    original_ip
+                );
+                let mut result = EndpointResult::success_with_comparison(
+                    endpoint.clone(),
+                    original_ip.clone(),
+                    original_latency,
+                    original_ip,
+                    original_latency,
+                );
+                result.warning = Some("当前网络已是最优，无需优选".to_string());
+                result
+            } else {
+                info_log!(
+                    "  端点 {} 最优 IP: {} ({:.0}ms, 原 {:.0}ms)",
+                    endpoint.name,
+                    best.ip,
+                    best.latency,
+                    original_latency
+                );
+                EndpointResult::success_with_comparison(
+                    endpoint.clone(),
+                    best.ip,
+                    best.latency,
+                    original_ip,
+                    original_latency,
+                )
+            }
         } else if original_result.success {
             // 如果优化 IP 都失败，但原始 IP 成功，使用原始 IP
             info_log!(

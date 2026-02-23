@@ -84,7 +84,7 @@ export function Dashboard({
   const [showImportDialog, setShowImportDialog] = useState(false)
 
   const testedCount = results.length
-  const availableCount = results.filter((r) => r.success).length
+  const availableCount = results.filter((r) => r.success && !r.use_original).length
   const enabledEndpoints = endpoints.filter((e) => e.enabled)
   const enabledCount = enabledEndpoints.length
 
@@ -611,6 +611,18 @@ function LatencyComparison({ result, isTesting }: { result: EndpointResult; isTe
     )
   }
 
+  // 已是最优：use_original 且有原始延迟数据，只显示当前延迟 + 蓝色徽章
+  if (result.use_original && hasOriginal) {
+    return (
+      <span className="flex items-center gap-1.5 text-xs lg:text-sm flex-wrap">
+        <span className={`font-semibold ${latencyColor}`}>{latency.toFixed(0)}ms</span>
+        <span className="inline-flex items-center px-1.5 py-0 rounded-md bg-apple-blue/10 text-apple-blue text-xs font-medium">
+          已是最优
+        </span>
+      </span>
+    )
+  }
+
   const originalMs = result.original_latency.toFixed(0)
   const optimizedMs = latency.toFixed(0)
 
@@ -754,7 +766,7 @@ function ResultRow({
             )}
           </button>
         )}
-        {result?.success && onApply && !isTesting && (
+        {result?.success && onApply && !isTesting && !result.use_original && (
           <button
             onClick={onApply}
             className="px-1.5 lg:px-2 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-green/10 text-apple-green hover:bg-apple-green/20"
