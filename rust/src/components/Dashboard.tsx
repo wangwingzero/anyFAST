@@ -619,6 +619,11 @@ function LatencyComparison({ result, isTesting }: { result: EndpointResult; isTe
         <span className="inline-flex items-center px-1.5 py-0 rounded-md bg-apple-blue/10 text-apple-blue text-xs font-medium">
           已是最优
         </span>
+        {result.warning && (
+          <span title={result.warning} className="inline-flex items-center cursor-help">
+            <AlertTriangle className="w-3.5 h-3.5 text-apple-orange" />
+          </span>
+        )}
       </span>
     )
   }
