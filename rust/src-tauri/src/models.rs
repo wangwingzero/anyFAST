@@ -156,6 +156,8 @@ pub struct AppConfig {
     pub preferred_ips: Vec<String>,
     #[serde(default = "default_continuous_mode")]
     pub continuous_mode: bool,
+    #[serde(default = "default_test_aggressiveness")]
+    pub test_aggressiveness: u32,
 }
 
 impl Default for AppConfig {
@@ -169,6 +171,7 @@ impl Default for AppConfig {
             endpoints: default_endpoints(),
             preferred_ips: default_preferred_ips(),
             continuous_mode: default_continuous_mode(),
+            test_aggressiveness: default_test_aggressiveness(),
         }
     }
 }
@@ -214,6 +217,10 @@ fn default_preferred_ips() -> Vec<String> {
 fn default_continuous_mode() -> bool {
     true
 }
+
+fn default_test_aggressiveness() -> u32 {
+    2
+} // 1=保守, 2=标准, 3=激进
 
 /// 测速进度事件类型
 #[derive(Debug, Clone, Serialize, Deserialize)]

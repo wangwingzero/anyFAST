@@ -231,6 +231,7 @@ export function Settings({
       autostart: config?.autostart ?? false,  // 保持当前自启动设置
       preferred_ips: [],
       continuous_mode: config?.continuous_mode ?? true,  // 保持当前持续优化设置
+      test_aggressiveness: config?.test_aggressiveness ?? 2,
     }
     try {
       await invoke('save_config', { config: newConfig })

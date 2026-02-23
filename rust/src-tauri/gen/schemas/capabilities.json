@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for anyrouter FAST","local":true,"windows":["main"],"permissions":["core:default","shell:allow-open","process:allow-restart","process:allow-exit","updater:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for anyrouter FAST","local":true,"windows":["main"],"permissions":["core:default","shell:allow-open","process:allow-restart","process:allow-exit","updater:default","updater:allow-check","updater:allow-download-and-install"]}}

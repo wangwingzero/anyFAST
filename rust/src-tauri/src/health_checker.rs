@@ -2,7 +2,7 @@
 //! 基准延迟跟踪 + 持续优化后台任务
 
 use crate::config::ConfigManager;
-use crate::endpoint_tester::EndpointTester;
+use crate::endpoint_tester::{EndpointTester, TestStrategy};
 use crate::hosts_manager::HostsBinding;
 use crate::hosts_ops;
 use crate::models::{Endpoint, EndpointResult, OptimizationEvent, OptimizationEventType};
@@ -113,6 +113,7 @@ impl HealthChecker {
         let mut cached_tester: Option<EndpointTester> = None;
         let mut cached_preferred_ips: Vec<String> = Vec::new();
         let mut cached_test_count: u32 = 0;
+        let mut cached_aggressiveness: u32 = 0;
 
         // 全量优选冷却期追踪：域名 → 上次全量优选时间
         let mut last_full_test: HashMap<String, std::time::Instant> = HashMap::new();
@@ -166,14 +167,21 @@ impl HealthChecker {
             let tester = match &cached_tester {
                 Some(t)
                     if cached_preferred_ips == config.preferred_ips
-                        && cached_test_count == config.test_count =>
+                        && cached_test_count == config.test_count
+                        && cached_aggressiveness == config.test_aggressiveness =>
                 {
                     t.clone()
                 }
                 _ => {
-                    let t = EndpointTester::new(config.preferred_ips.clone(), config.test_count);
+                    let strategy = TestStrategy::from_aggressiveness(config.test_aggressiveness);
+                    let t = EndpointTester::with_strategy(
+                        config.preferred_ips.clone(),
+                        config.test_count,
+                        strategy,
+                    );
                     cached_preferred_ips = config.preferred_ips.clone();
                     cached_test_count = config.test_count;
+                    cached_aggressiveness = config.test_aggressiveness;
                     cached_tester = Some(t.clone());
                     t
                 }

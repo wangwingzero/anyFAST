@@ -24,6 +24,7 @@ export const mockConfig: AppConfig = {
   autostart: false,
   preferred_ips: [],
   continuous_mode: true,
+  test_aggressiveness: 2,
 }
 
 // Mock endpoint results

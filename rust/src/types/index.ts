@@ -28,6 +28,7 @@ export interface AppConfig {
   endpoints: Endpoint[]
   preferred_ips: string[]
   continuous_mode: boolean
+  test_aggressiveness: number
 }
 
 export interface Progress {

@@ -17,7 +17,7 @@ pub mod service;
 pub mod client;
 
 use config::ConfigManager;
-use endpoint_tester::{estimate_test_timeout, EndpointTester};
+use endpoint_tester::{estimate_test_timeout, EndpointTester, TestStrategy};
 use health_checker::{BaselineTracker, HealthChecker};
 use history::HistoryManager;
 use hosts_manager::HostsBinding;
@@ -169,10 +169,12 @@ async fn start_speed_test(
 
     let update_baseline = update_baseline.unwrap_or(true);
 
-    let tester = EndpointTester::with_app_handle(
+    let strategy = TestStrategy::from_aggressiveness(config.test_aggressiveness);
+    let tester = EndpointTester::with_app_handle_and_strategy(
         config.preferred_ips.clone(),
         config.test_count,
         Some(state.app_handle.clone()),
+        strategy,
     );
 
     // 保存 tester 以便取消
@@ -676,10 +678,12 @@ async fn test_single_endpoint(
     endpoint: Endpoint,
 ) -> Result<EndpointResult, String> {
     let config = state.config_manager.load().map_err(|e| e.to_string())?;
-    let tester = EndpointTester::with_app_handle(
+    let strategy = TestStrategy::from_aggressiveness(config.test_aggressiveness);
+    let tester = EndpointTester::with_app_handle_and_strategy(
         config.preferred_ips.clone(),
         config.test_count,
         Some(state.app_handle.clone()),
+        strategy,
     );
 
     // 使用 30 秒超时防止永久卡住

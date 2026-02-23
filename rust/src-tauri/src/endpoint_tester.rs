@@ -10,7 +10,7 @@ use rand::Rng;
 use reqwest::Client;
 use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 #[cfg(feature = "tauri-runtime")]
@@ -64,12 +64,8 @@ const DEFAULT_CF_IPS: &[&str] = &[
 /// Online API for fetching optimized Cloudflare IPs (cf-speed-dns project)
 const IPDB_API_URL: &str = "https://ip.164746.xyz/ipTop10.html";
 
-/// Max number of candidate IPs for each endpoint
-const MAX_TEST_IPS: usize = 10;
-/// Max concurrent endpoint tests
+/// Max concurrent endpoint tests (fallback, overridden by TestStrategy)
 const MAX_ENDPOINT_CONCURRENCY: usize = 3;
-/// Max concurrent IP tests within one endpoint
-const MAX_IP_CONCURRENCY_PER_ENDPOINT: usize = 4;
 /// DNS lookup timeout for each endpoint
 const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Timeout for a single IP test
@@ -84,14 +80,109 @@ const MAX_WORKFLOW_TIMEOUT: Duration = Duration::from_secs(180);
 /// Reserve some headroom for outer workflow timeout
 const COLLECT_TIMEOUT_HEADROOM: Duration = Duration::from_secs(5);
 
+/// 测速策略参数：控制并发度、错开间隔、批间冷却等
+/// 通过 `from_aggressiveness(level)` 获取预设，或手动构造
+#[derive(Debug, Clone)]
+pub struct TestStrategy {
+    /// 每个端点内最大 IP 并发数
+    pub max_ip_concurrency: usize,
+    /// 最大端点并发数
+    pub max_endpoint_concurrency: usize,
+    /// 请求错开基础间隔（毫秒）
+    pub stagger_base_ms: u64,
+    /// 请求错开随机抖动上限（毫秒）
+    pub stagger_jitter_ms: u64,
+    /// 批间冷却时间（毫秒）
+    pub inter_batch_cooldown_ms: u64,
+    /// 降级后 IP 并发下限
+    pub min_ip_concurrency: usize,
+    /// 每个端点最大候选 IP 数
+    pub max_test_ips: usize,
+    /// 降级因子（每次降级时并发数除以此值）
+    pub degradation_factor: usize,
+}
+
+impl TestStrategy {
+    /// 根据激进度等级返回预设策略
+    /// - 1: 保守（低并发、长间隔，适合限流严重的环境）
+    /// - 2: 标准（平衡，新默认值）
+    /// - 3: 激进（高并发、短间隔，接近旧行为）
+    pub fn from_aggressiveness(level: u32) -> Self {
+        match level {
+            1 => Self {
+                max_ip_concurrency: 2,
+                max_endpoint_concurrency: 1,
+                stagger_base_ms: 300,
+                stagger_jitter_ms: 200,
+                inter_batch_cooldown_ms: 800,
+                min_ip_concurrency: 1,
+                max_test_ips: 6,
+                degradation_factor: 2,
+            },
+            3 => Self {
+                max_ip_concurrency: 4,
+                max_endpoint_concurrency: 3,
+                stagger_base_ms: 100,
+                stagger_jitter_ms: 80,
+                inter_batch_cooldown_ms: 200,
+                min_ip_concurrency: 1,
+                max_test_ips: 10,
+                degradation_factor: 2,
+            },
+            // 2 或其他值均使用标准模式
+            _ => Self {
+                max_ip_concurrency: 3,
+                max_endpoint_concurrency: 2,
+                stagger_base_ms: 200,
+                stagger_jitter_ms: 150,
+                inter_batch_cooldown_ms: 500,
+                min_ip_concurrency: 1,
+                max_test_ips: 8,
+                degradation_factor: 2,
+            },
+        }
+    }
+
+    /// 根据当前降级级别返回调整后的参数
+    fn effective_ip_concurrency(&self, degradation_level: u32) -> usize {
+        let mut concurrency = self.max_ip_concurrency;
+        for _ in 0..degradation_level {
+            concurrency /= self.degradation_factor;
+        }
+        concurrency.max(self.min_ip_concurrency)
+    }
+
+    fn effective_stagger_ms(&self, degradation_level: u32) -> u64 {
+        self.stagger_base_ms * (1 + degradation_level as u64)
+    }
+
+    fn effective_cooldown_ms(&self, degradation_level: u32) -> u64 {
+        self.inter_batch_cooldown_ms * (1 + degradation_level as u64)
+    }
+}
+
+impl Default for TestStrategy {
+    fn default() -> Self {
+        Self::from_aggressiveness(2)
+    }
+}
+
 /// Estimate a realistic timeout budget for testing `endpoint_count` endpoints.
 /// This prevents long endpoint lists from starving later rows and being marked as 9999ms early.
 pub fn estimate_test_timeout(endpoint_count: usize) -> Duration {
+    estimate_test_timeout_with_concurrency(endpoint_count, MAX_ENDPOINT_CONCURRENCY)
+}
+
+/// Estimate timeout with a specific concurrency limit (from TestStrategy).
+pub fn estimate_test_timeout_with_concurrency(
+    endpoint_count: usize,
+    max_concurrency: usize,
+) -> Duration {
     if endpoint_count == 0 {
         return MIN_WORKFLOW_TIMEOUT;
     }
 
-    let concurrency = endpoint_count.clamp(1, MAX_ENDPOINT_CONCURRENCY);
+    let concurrency = endpoint_count.clamp(1, max_concurrency);
     let batches = endpoint_count.div_ceil(concurrency) as u64;
 
     // Worst-case per endpoint phase:
@@ -294,14 +385,27 @@ pub struct EndpointTester {
     /// 可选的 AppHandle，用于向前端发射测速进度事件
     #[cfg(feature = "tauri-runtime")]
     app_handle: Option<AppHandle>,
-    /// 共享 CF 封锁标志：一旦某个端点检测到 CF 风控，其余 CF 端点跳过候选 IP 测试
-    cf_throttled: Arc<AtomicBool>,
+    /// 测速策略参数
+    strategy: TestStrategy,
+    /// CF 限流冷却期截止时间（替代旧的永久标志 cf_throttled）
+    cf_throttle_until: Arc<Mutex<Option<Instant>>>,
+    /// 当前降级级别（0=正常，每次限流+1）
+    degradation_level: Arc<AtomicU32>,
 }
 
 use tokio::sync::Mutex;
 
 impl EndpointTester {
+    #[allow(dead_code)]
     pub fn new(custom_cf_ips: Vec<String>, test_rounds: u32) -> Self {
+        Self::with_strategy(custom_cf_ips, test_rounds, TestStrategy::default())
+    }
+
+    pub fn with_strategy(
+        custom_cf_ips: Vec<String>,
+        test_rounds: u32,
+        strategy: TestStrategy,
+    ) -> Self {
         // Use native TLS (Schannel on Windows, Security Framework on macOS)
         // for authentic OS-level TLS fingerprints instead of rustls's identifiable JA3
         let native_connector =
@@ -338,12 +442,15 @@ impl EndpointTester {
             test_rounds,
             #[cfg(feature = "tauri-runtime")]
             app_handle: None,
-            cf_throttled: Arc::new(AtomicBool::new(false)),
+            strategy,
+            cf_throttle_until: Arc::new(Mutex::new(None)),
+            degradation_level: Arc::new(AtomicU32::new(0)),
         }
     }
 
     /// 创建带 AppHandle 的 EndpointTester（用于向前端推送测速进度）
     #[cfg(feature = "tauri-runtime")]
+    #[allow(dead_code)]
     pub fn with_app_handle(
         custom_cf_ips: Vec<String>,
         test_rounds: u32,
@@ -352,6 +459,49 @@ impl EndpointTester {
         let mut tester = Self::new(custom_cf_ips, test_rounds);
         tester.app_handle = app_handle;
         tester
+    }
+
+    /// 创建带 AppHandle 和 TestStrategy 的 EndpointTester
+    #[cfg(feature = "tauri-runtime")]
+    pub fn with_app_handle_and_strategy(
+        custom_cf_ips: Vec<String>,
+        test_rounds: u32,
+        app_handle: Option<AppHandle>,
+        strategy: TestStrategy,
+    ) -> Self {
+        let mut tester = Self::with_strategy(custom_cf_ips, test_rounds, strategy);
+        tester.app_handle = app_handle;
+        tester
+    }
+
+    /// 设置 CF 限流冷却期
+    async fn set_cf_cooldown(&self, duration: Duration) {
+        let mut throttle = self.cf_throttle_until.lock().await;
+        *throttle = Some(Instant::now() + duration);
+    }
+
+    /// 检查 CF 是否处于限流冷却期
+    async fn is_cf_throttled(&self) -> bool {
+        let throttle = self.cf_throttle_until.lock().await;
+        match *throttle {
+            Some(until) => Instant::now() < until,
+            None => false,
+        }
+    }
+
+    /// 触发降级（限流时调用）
+    fn trigger_degradation(&self) {
+        let old = self.degradation_level.fetch_add(1, Ordering::SeqCst);
+        let new_level = old + 1;
+        let effective_concurrency = self.strategy.effective_ip_concurrency(new_level);
+        let effective_stagger = self.strategy.effective_stagger_ms(new_level);
+        warn_log!(
+            "触发降级: level {} → {}, 有效并发={}, 有效间隔={}ms",
+            old,
+            new_level,
+            effective_concurrency,
+            effective_stagger
+        );
     }
 
     /// 向前端发射测速进度事件（无 AppHandle 时 no-op）
@@ -468,9 +618,18 @@ impl EndpointTester {
             return Vec::new();
         }
 
-        // Limit concurrent endpoint tests to avoid overwhelming the system
-        let max_concurrency = endpoints.len().clamp(1, MAX_ENDPOINT_CONCURRENCY);
-        debug_log!("最大并发数: {}", max_concurrency);
+        // 每次 test_all 调用重置降级级别
+        self.degradation_level.store(0, Ordering::SeqCst);
+
+        // 使用 strategy 的端点并发数
+        let max_concurrency = endpoints
+            .len()
+            .clamp(1, self.strategy.max_endpoint_concurrency);
+        debug_log!(
+            "最大并发数: {} (策略: {:?})",
+            max_concurrency,
+            self.strategy.max_endpoint_concurrency
+        );
 
         // 发射 TestStarted 事件
         self.emit_progress(
@@ -493,6 +652,12 @@ impl EndpointTester {
             if self.cancelled.load(Ordering::SeqCst) {
                 warn_log!("测试已取消，停止添加新任务");
                 break;
+            }
+
+            // 端点间冷却：第二个端点开始添加间隔，避免突发流量
+            if idx > 0 {
+                tokio::time::sleep(Duration::from_millis(self.strategy.inter_batch_cooldown_ms))
+                    .await;
             }
 
             debug_log!(
@@ -797,8 +962,8 @@ impl EndpointTester {
             debug_log!("  检测到 Cloudflare IP，启用 CF 优选");
         }
 
-        // 封锁快速跳过：如果其他端点已检测到 CF 风控，跳过候选 IP 测试
-        if self.cf_throttled.load(Ordering::SeqCst) && is_cf {
+        // 封锁快速跳过：如果 CF 处于限流冷却期，跳过候选 IP 测试
+        if self.is_cf_throttled().await && is_cf {
             warn_log!(
                 "  [{}] CF 风控已触发，跳过候选IP测试，使用原始IP",
                 endpoint.name
@@ -854,7 +1019,7 @@ impl EndpointTester {
             self.custom_cf_ips.to_vec()
         } else if is_cf {
             let cf_ips = self.get_cf_ips().await;
-            merge_candidate_ips(cf_ips, &dns_ips, MAX_TEST_IPS)
+            merge_candidate_ips(cf_ips, &dns_ips, self.strategy.max_test_ips)
         } else {
             // 非 CF 站点：并发查询多个公共 DNS，收集更多候选 IP
             debug_log!("  非CF站点，启用多DNS解析器优选");
@@ -868,11 +1033,11 @@ impl EndpointTester {
             }
             // 合并：DNS IP 优先，然后追加多 DNS 发现的新 IP，限制总数
             let mut seen = HashSet::new();
-            let mut merged = Vec::with_capacity(MAX_TEST_IPS);
+            let mut merged = Vec::with_capacity(self.strategy.max_test_ips);
             for ip in dns_ips.iter().chain(multi_dns_ips.iter()) {
                 if seen.insert(ip.clone()) {
                     merged.push(ip.clone());
-                    if merged.len() >= MAX_TEST_IPS {
+                    if merged.len() >= self.strategy.max_test_ips {
                         break;
                     }
                 }
@@ -1007,29 +1172,20 @@ impl EndpointTester {
         // 打乱候选 IP 顺序，避免每次以相同顺序访问 CF 边缘节点（降低被识别为扫描行为的概率）
         test_ips.shuffle(&mut rand::thread_rng());
 
-        // Test all IPs concurrently with timeout
-        let mut join_set = JoinSet::new();
-        let ip_semaphore = Arc::new(Semaphore::new(MAX_IP_CONCURRENCY_PER_ENDPOINT));
-        for (ip_idx, ip) in test_ips.iter().enumerate() {
-            let ep = endpoint.clone();
-            let tester = self.clone();
-            let ip_clone = ip.clone();
-            let ip_permit = ip_semaphore.clone();
-            join_set.spawn(async move {
-                // Stagger connection attempts to avoid burst traffic that triggers
-                // Cloudflare rate limiting (main cause of "all timeout" on retests)
-                if ip_idx > 0 {
-                    let jitter = rand::thread_rng().gen_range(0u64..50);
-                    tokio::time::sleep(Duration::from_millis(80 * ip_idx as u64 + jitter)).await;
-                }
-                match ip_permit.acquire_owned().await {
-                    Ok(_permit) => tester.test_single_ip(&ep, ip_clone).await,
-                    Err(_) => EndpointResult::failure(ep, ip_clone, "并发控制异常".into()),
-                }
-            });
-        }
+        // 分批测试候选 IP（降低突发流量，支持降级重试）
+        let degradation_level = self.degradation_level.load(Ordering::SeqCst);
+        let batch_size = self.strategy.effective_ip_concurrency(degradation_level);
+        let stagger_ms = self.strategy.effective_stagger_ms(degradation_level);
+        let cooldown_ms = self.strategy.effective_cooldown_ms(degradation_level);
 
-        // Collect results with total timeout for all IP tests
+        debug_log!(
+            "  分批测试: batch_size={}, stagger={}ms, cooldown={}ms, degradation_level={}",
+            batch_size,
+            stagger_ms,
+            cooldown_ms,
+            degradation_level
+        );
+
         let mut best_result: Option<EndpointResult> = None;
         let ip_test_start = Instant::now();
         let ip_test_timeout = IP_TEST_TOTAL_TIMEOUT;
@@ -1037,119 +1193,171 @@ impl EndpointTester {
         let mut ip_tested_count: usize = 0;
         let mut timeout_count: usize = 0;
         let mut cf_blocked_count: usize = 0;
+        let mut early_exit = false;
 
-        loop {
+        for (batch_index, batch) in test_ips.chunks(batch_size).enumerate() {
             // 检查总超时
             if ip_test_start.elapsed() > ip_test_timeout {
                 warn_log!(
                     "  IP 测试超时 ({}s)，已测试部分 IP",
                     IP_TEST_TOTAL_TIMEOUT.as_secs()
                 );
-                join_set.abort_all();
                 break;
             }
 
             // 检查取消
             if self.cancelled.load(Ordering::SeqCst) {
                 warn_log!("  检测到取消信号，中止 IP 测试");
-                join_set.abort_all();
                 break;
             }
 
-            // 等待下一个结果（3秒超时）
-            match tokio::time::timeout(Duration::from_secs(3), join_set.join_next()).await {
-                Ok(Some(Ok(result))) => {
-                    ip_tested_count += 1;
-                    if result.success {
-                        ip_success_count += 1;
-                        if best_result.is_none()
-                            || result.latency < best_result.as_ref().unwrap().latency
-                        {
-                            debug_log!(
-                                "    IP {} 延迟 {:.0}ms (新最优)",
-                                result.ip,
-                                result.latency
-                            );
-                            best_result = Some(result);
-                        } else {
-                            debug_log!("    IP {} 延迟 {:.0}ms", result.ip, result.latency);
-                        }
-                    } else {
-                        let err_msg = result.error.as_deref().unwrap_or("unknown");
-                        debug_log!("    IP {} 失败: {}", result.ip, err_msg);
-                        // 分类统计错误
-                        match categorize_error(err_msg) {
-                            IpTestErrorCategory::NetworkTimeout => timeout_count += 1,
-                            IpTestErrorCategory::NetworkRefused => timeout_count += 1,
-                            IpTestErrorCategory::CfBlocked => cf_blocked_count += 1,
-                            IpTestErrorCategory::Other => {}
-                        }
-                    }
+            // 批间冷却（第一批除外）
+            if batch_index > 0 {
+                debug_log!("  批间冷却 {}ms...", cooldown_ms);
+                tokio::time::sleep(Duration::from_millis(cooldown_ms)).await;
+            }
 
-                    // 智能检测：已测试 ≥5 个 IP && 成功率 < 20%
-                    if ip_tested_count >= 5 && ip_success_count * 5 < ip_tested_count {
-                        let fail_count = ip_tested_count - ip_success_count;
-                        if cf_blocked_count > timeout_count
-                            && cf_blocked_count * 2 >= fail_count
-                            && is_cf
-                        {
-                            // CF 封锁占多数 → CF 风控逻辑
-                            warn_log!(
-                                "  [{}] 检测到CF风控: {}/{} IP 成功, {}个CF封锁",
-                                endpoint.name,
-                                ip_success_count,
-                                ip_tested_count,
-                                cf_blocked_count
-                            );
-                            self.cf_throttled.store(true, Ordering::SeqCst);
-                            self.emit_progress(
-                                TestProgressEventType::CfThrottleDetected,
-                                "warning",
-                                Some(&endpoint.name),
-                                format!(
-                                    "[{}] 检测到CF风控，跳过剩余候选IP ({}/{}成功)",
-                                    endpoint.name, ip_success_count, ip_tested_count
-                                ),
-                            );
-                            join_set.abort_all();
-                            break;
-                        } else if timeout_count * 2 >= fail_count {
-                            // 超时占多数 → 网络不可达
-                            warn_log!(
-                                "  [{}] 网络不可达: {}/{} IP 成功, {}个超时",
-                                endpoint.name,
-                                ip_success_count,
-                                ip_tested_count,
-                                timeout_count
-                            );
-                            self.emit_progress(
-                                TestProgressEventType::NetworkUnreachable,
-                                "warning",
-                                Some(&endpoint.name),
-                                format!(
-                                    "[{}] 候选IP大面积超时，可能网络不可达 ({}/{}成功)",
-                                    endpoint.name, ip_success_count, ip_tested_count
-                                ),
-                            );
-                            // 注意：不设置 cf_throttled 标志
-                            join_set.abort_all();
-                            break;
-                        }
+            // Spawn 当前批次的任务（批内错开 stagger）
+            let mut join_set = JoinSet::new();
+            for (ip_idx, ip) in batch.iter().enumerate() {
+                let ep = endpoint.clone();
+                let tester = self.clone();
+                let ip_clone = ip.clone();
+                let stagger_delay = if ip_idx > 0 {
+                    let jitter =
+                        rand::thread_rng().gen_range(0u64..self.strategy.stagger_jitter_ms.max(1));
+                    stagger_ms * ip_idx as u64 + jitter
+                } else {
+                    0
+                };
+                join_set.spawn(async move {
+                    if stagger_delay > 0 {
+                        tokio::time::sleep(Duration::from_millis(stagger_delay)).await;
                     }
-                }
-                Ok(Some(Err(e))) => {
-                    error_log!("    IP 测试任务 panic: {:?}", e);
-                }
-                Ok(None) => {
-                    // 所有任务完成
-                    debug_log!("  所有 IP 测试完成");
+                    tester.test_single_ip(&ep, ip_clone).await
+                });
+            }
+
+            // 收集当前批次结果
+            loop {
+                if ip_test_start.elapsed() > ip_test_timeout {
+                    join_set.abort_all();
                     break;
                 }
-                Err(_) => {
-                    // 继续等待
-                    debug_log!("    等待 IP 测试结果...");
+                if self.cancelled.load(Ordering::SeqCst) {
+                    join_set.abort_all();
+                    break;
+                }
+
+                match tokio::time::timeout(Duration::from_secs(3), join_set.join_next()).await {
+                    Ok(Some(Ok(result))) => {
+                        ip_tested_count += 1;
+                        if result.success {
+                            ip_success_count += 1;
+                            if best_result.is_none()
+                                || result.latency < best_result.as_ref().unwrap().latency
+                            {
+                                debug_log!(
+                                    "    IP {} 延迟 {:.0}ms (新最优)",
+                                    result.ip,
+                                    result.latency
+                                );
+                                best_result = Some(result);
+                            } else {
+                                debug_log!("    IP {} 延迟 {:.0}ms", result.ip, result.latency);
+                            }
+                        } else {
+                            let err_msg = result.error.as_deref().unwrap_or("unknown");
+                            debug_log!("    IP {} 失败: {}", result.ip, err_msg);
+                            match categorize_error(err_msg) {
+                                IpTestErrorCategory::NetworkTimeout => timeout_count += 1,
+                                IpTestErrorCategory::NetworkRefused => timeout_count += 1,
+                                IpTestErrorCategory::CfBlocked => cf_blocked_count += 1,
+                                IpTestErrorCategory::Other => {}
+                            }
+                        }
+                    }
+                    Ok(Some(Err(e))) => {
+                        error_log!("    IP 测试任务 panic: {:?}", e);
+                    }
+                    Ok(None) => {
+                        // 当前批次所有任务完成
+                        break;
+                    }
+                    Err(_) => {
+                        // 等待超时，继续
+                        debug_log!("    等待 IP 测试结果...");
+                    }
                 }
             }
+
+            // 批级别智能检测
+            if ip_tested_count >= 5 && ip_success_count * 5 < ip_tested_count {
+                let fail_count = ip_tested_count - ip_success_count;
+                if cf_blocked_count > timeout_count && cf_blocked_count * 2 >= fail_count && is_cf {
+                    // CF 封锁占多数 → 触发降级 + 60s 冷却期（可恢复）
+                    warn_log!(
+                        "  [{}] 检测到CF风控: {}/{} IP 成功, {}个CF封锁 → 降级+冷却60s",
+                        endpoint.name,
+                        ip_success_count,
+                        ip_tested_count,
+                        cf_blocked_count
+                    );
+                    self.set_cf_cooldown(Duration::from_secs(60)).await;
+                    self.trigger_degradation();
+                    self.emit_progress(
+                        TestProgressEventType::CfThrottleDetected,
+                        "warning",
+                        Some(&endpoint.name),
+                        format!(
+                            "[{}] 检测到CF风控，降级重试+60s冷却 ({}/{}成功)",
+                            endpoint.name, ip_success_count, ip_tested_count
+                        ),
+                    );
+                    early_exit = true;
+                    break;
+                } else if timeout_count * 2 >= fail_count {
+                    // 超时占多数 → 网络不可达
+                    warn_log!(
+                        "  [{}] 网络不可达: {}/{} IP 成功, {}个超时",
+                        endpoint.name,
+                        ip_success_count,
+                        ip_tested_count,
+                        timeout_count
+                    );
+                    self.emit_progress(
+                        TestProgressEventType::NetworkUnreachable,
+                        "warning",
+                        Some(&endpoint.name),
+                        format!(
+                            "[{}] 候选IP大面积超时，可能网络不可达 ({}/{}成功)",
+                            endpoint.name, ip_success_count, ip_tested_count
+                        ),
+                    );
+                    early_exit = true;
+                    break;
+                }
+            }
+
+            // 提前结束：已找到足够好的结果（延迟 < 原始的 70%）
+            if let Some(ref best) = best_result {
+                if original_latency < 9999.0
+                    && original_latency > 0.0
+                    && best.latency < original_latency * 0.7
+                {
+                    info_log!(
+                        "  [{}] 提前结束: 最优 {:.0}ms < 原始 {:.0}ms × 70%",
+                        endpoint.name,
+                        best.latency,
+                        original_latency
+                    );
+                    break;
+                }
+            }
+        }
+
+        if early_exit {
+            debug_log!("  IP 测试提前退出（限流或网络不可达）");
         }
 
         // 发射候选 IP 测试完成事件
@@ -1644,5 +1852,86 @@ mod tests {
         let results = tester.test_all(&[]).await;
 
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_strategy_from_aggressiveness() {
+        let conservative = TestStrategy::from_aggressiveness(1);
+        assert_eq!(conservative.max_ip_concurrency, 2);
+        assert_eq!(conservative.max_endpoint_concurrency, 1);
+        assert_eq!(conservative.stagger_base_ms, 300);
+        assert_eq!(conservative.max_test_ips, 6);
+
+        let standard = TestStrategy::from_aggressiveness(2);
+        assert_eq!(standard.max_ip_concurrency, 3);
+        assert_eq!(standard.max_endpoint_concurrency, 2);
+        assert_eq!(standard.stagger_base_ms, 200);
+        assert_eq!(standard.max_test_ips, 8);
+
+        let aggressive = TestStrategy::from_aggressiveness(3);
+        assert_eq!(aggressive.max_ip_concurrency, 4);
+        assert_eq!(aggressive.max_endpoint_concurrency, 3);
+        assert_eq!(aggressive.stagger_base_ms, 100);
+        assert_eq!(aggressive.max_test_ips, 10);
+
+        // Invalid levels default to standard
+        let invalid = TestStrategy::from_aggressiveness(99);
+        assert_eq!(invalid.max_ip_concurrency, standard.max_ip_concurrency);
+    }
+
+    #[test]
+    fn test_strategy_degradation() {
+        let strategy = TestStrategy::from_aggressiveness(2);
+
+        // Level 0: normal
+        assert_eq!(strategy.effective_ip_concurrency(0), 3);
+        assert_eq!(strategy.effective_stagger_ms(0), 200);
+        assert_eq!(strategy.effective_cooldown_ms(0), 500);
+
+        // Level 1: degraded
+        assert_eq!(strategy.effective_ip_concurrency(1), 1); // 3/2 = 1
+        assert_eq!(strategy.effective_stagger_ms(1), 400); // 200 * 2
+        assert_eq!(strategy.effective_cooldown_ms(1), 1000); // 500 * 2
+
+        // Level 2: further degraded (clamped to min)
+        assert_eq!(strategy.effective_ip_concurrency(2), 1); // min=1
+        assert_eq!(strategy.effective_stagger_ms(2), 600); // 200 * 3
+        assert_eq!(strategy.effective_cooldown_ms(2), 1500); // 500 * 3
+    }
+
+    #[tokio::test]
+    async fn test_cf_throttle_cooldown() {
+        let tester = EndpointTester::new(vec![], 3);
+
+        // Initially not throttled
+        assert!(!tester.is_cf_throttled().await);
+
+        // Set cooldown
+        tester.set_cf_cooldown(Duration::from_millis(100)).await;
+        assert!(tester.is_cf_throttled().await);
+
+        // Wait for cooldown to expire
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(!tester.is_cf_throttled().await);
+    }
+
+    #[test]
+    fn test_degradation_trigger() {
+        let tester = EndpointTester::new(vec![], 3);
+        assert_eq!(tester.degradation_level.load(Ordering::SeqCst), 0);
+
+        tester.trigger_degradation();
+        assert_eq!(tester.degradation_level.load(Ordering::SeqCst), 1);
+
+        tester.trigger_degradation();
+        assert_eq!(tester.degradation_level.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_tester_with_strategy() {
+        let strategy = TestStrategy::from_aggressiveness(1);
+        let tester = EndpointTester::with_strategy(vec![], 3, strategy);
+        assert_eq!(tester.strategy.max_ip_concurrency, 2);
+        assert_eq!(tester.strategy.max_endpoint_concurrency, 1);
     }
 }
