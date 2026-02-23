@@ -11,6 +11,7 @@ use std::sync::Arc;
 #[cfg(feature = "tauri-runtime")]
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
+use rand::Rng;
 use tokio_util::sync::CancellationToken;
 
 /// 基准延迟跟踪器
@@ -135,7 +136,10 @@ impl HealthChecker {
                 break;
             }
 
-            let interval = std::time::Duration::from_secs(config.check_interval);
+            let interval_secs = config.check_interval;
+            // Add 0~20% random jitter to avoid bot-like precise periodic patterns
+            let jitter = rand::thread_rng().gen_range(0..=interval_secs / 5);
+            let interval = std::time::Duration::from_secs(interval_secs + jitter);
 
             // 等待检查间隔或取消信号
             tokio::select! {

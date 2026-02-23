@@ -416,8 +416,8 @@ jobs:
           WIN_URL_RAW=$(jq -r '.platforms."windows-x86_64".url' latest.json)
           RELEASE_DATE=$(jq -r '.pub_date' latest.json)
 
-          # Prefix download URL with ghproxy.net proxy
-          WIN_URL_CN="https://ghproxy.net/${WIN_URL_RAW}"
+          # Prefix download URL with gh-proxy.com proxy
+          WIN_URL_CN="https://gh-proxy.com/${WIN_URL_RAW}"
 
           jq -n \
             --arg version "$VERSION" \

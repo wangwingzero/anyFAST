@@ -19,8 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpSocket;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
-use tokio_rustls::rustls::{ClientConfig, RootCertStore};
-use tokio_rustls::TlsConnector;
+use tokio_native_tls::TlsConnector;
 
 /// 日志宏：输出带时间戳的调试日志到 stderr
 macro_rules! debug_log {
@@ -303,19 +302,11 @@ use tokio::sync::Mutex;
 
 impl EndpointTester {
     pub fn new(custom_cf_ips: Vec<String>, test_rounds: u32) -> Self {
-        // Install ring as the default CryptoProvider (safe to call multiple times;
-        // needed when both ring and aws-lc-rs features are enabled via deps)
-        let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
-
-        // Pre-create TLS configuration (reused across all connections)
-        let mut root_store = RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-        let config = ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
-        let tls_connector = TlsConnector::from(Arc::new(config));
+        // Use native TLS (Schannel on Windows, Security Framework on macOS)
+        // for authentic OS-level TLS fingerprints instead of rustls's identifiable JA3
+        let native_connector = native_tls::TlsConnector::new()
+            .expect("Failed to create native TLS connector");
+        let tls_connector = TlsConnector::from(native_connector);
 
         // Pre-create DNS resolver with domestic DNS servers for faster resolution
         let mut name_servers = Vec::new();
@@ -1347,30 +1338,39 @@ impl EndpointTester {
             }
         })?;
 
-        // TLS handshake using reusable connector
+        // TLS handshake using native TLS (OS-native fingerprint)
         let connector = self.tls_connector.clone();
-        let domain = endpoint
-            .domain
-            .clone()
-            .try_into()
-            .map_err(|_| "Invalid domain")?;
 
         let mut tls_stream = connector
-            .connect(domain, stream)
+            .connect(&endpoint.domain, stream)
             .await
             .map_err(|e| format!("TLS: {}", e))?;
 
-        // Always test with "/" - we only need to verify IP connectivity (TCP+TLS+HTTP),
-        // not the actual API path (e.g. /v1) which often requires authentication and times out
+        // Browser-like HTTP headers (order and content match Chrome to reduce WAF scoring)
+        // Platform-specific values must match TLS fingerprint (Schannel=Windows, SecureTransport=macOS)
+        #[cfg(target_os = "macos")]
+        let (platform, ua) = (
+            "macOS",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        );
+        #[cfg(not(target_os = "macos"))]
+        let (platform, ua) = (
+            "Windows",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        );
         let request = format!(
             "HEAD / HTTP/1.1\r\n\
              Host: {}\r\n\
-             User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36\r\n\
-             Accept: */*\r\n\
-             Accept-Language: en-US,en;q=0.9\r\n\
              Connection: close\r\n\
+             sec-ch-ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"\r\n\
+             sec-ch-ua-mobile: ?0\r\n\
+             sec-ch-ua-platform: \"{}\"\r\n\
+             User-Agent: {}\r\n\
+             Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8\r\n\
+             Accept-Encoding: gzip, deflate, br, zstd\r\n\
+             Accept-Language: en-US,en;q=0.9\r\n\
              \r\n",
-            endpoint.domain
+            endpoint.domain, platform, ua
         );
 
         tls_stream
@@ -1398,15 +1398,70 @@ impl EndpointTester {
             // 解析状态码，检测 CF 风控
             if let Some(status_str) = response.get(9..12) {
                 if let Ok(status) = status_str.trim().parse::<u16>() {
-                    if status == 403 || status == 429 {
+                    // 提取 CF 风控相关响应头用于压测分析
+                    let cf_ray = Self::extract_header(&response, "cf-ray");
+                    let cf_mitigated = Self::extract_header(&response, "cf-mitigated");
+                    let cf_chl_bypass = Self::extract_header(&response, "cf-chl-bypass");
+                    let server = Self::extract_header(&response, "server");
+                    let retry_after = Self::extract_header(&response, "retry-after");
+
+                    if status == 429 {
+                        warn_log!(
+                            "  [CF风控] {} -> {} | HTTP {} | latency={:.0}ms | server={} | cf-ray={} | cf-mitigated={} | retry-after={}",
+                            endpoint.domain, ip, status, latency,
+                            server.as_deref().unwrap_or("-"),
+                            cf_ray.as_deref().unwrap_or("-"),
+                            cf_mitigated.as_deref().unwrap_or("-"),
+                            retry_after.as_deref().unwrap_or("-"),
+                        );
                         return Err(format!("CF_BLOCKED: HTTP {}", status));
                     }
+
+                    if status == 403 {
+                        warn_log!(
+                            "  [CF挑战] {} -> {} | HTTP {} | latency={:.0}ms | server={} | cf-ray={} | cf-mitigated={} | cf-chl-bypass={}",
+                            endpoint.domain, ip, status, latency,
+                            server.as_deref().unwrap_or("-"),
+                            cf_ray.as_deref().unwrap_or("-"),
+                            cf_mitigated.as_deref().unwrap_or("-"),
+                            cf_chl_bypass.as_deref().unwrap_or("-"),
+                        );
+                        // 403 仍视为连通成功（Turnstile/JS challenge 不影响 API 流量）
+                    } else if status >= 400 {
+                        debug_log!(
+                            "  [HTTP] {} -> {} | HTTP {} | latency={:.0}ms | server={} | cf-ray={}",
+                            endpoint.domain, ip, status, latency,
+                            server.as_deref().unwrap_or("-"),
+                            cf_ray.as_deref().unwrap_or("-"),
+                        );
+                    } else {
+                        debug_log!(
+                            "  [HTTP] {} -> {} | HTTP {} | latency={:.0}ms | cf-ray={}",
+                            endpoint.domain, ip, status, latency,
+                            cf_ray.as_deref().unwrap_or("-"),
+                        );
+                    }
+                    // 403 (CF Turnstile challenge, origin 403, etc.) confirms IP connectivity:
+                    // TCP connected, TLS handshake succeeded, HTTP response received.
+                    // API traffic bypasses challenges via proper headers/API keys.
                 }
             }
             Ok(latency)
         } else {
             Err("Invalid response".into())
         }
+    }
+
+    /// 从 HTTP 响应中提取指定 header 的值（不区分大小写）
+    fn extract_header(response: &str, name: &str) -> Option<String> {
+        for line in response.split("\r\n") {
+            if let Some(colon_pos) = line.find(':') {
+                if line[..colon_pos].eq_ignore_ascii_case(name) {
+                    return Some(line[colon_pos + 1..].trim().to_string());
+                }
+            }
+        }
+        None
     }
 }
 

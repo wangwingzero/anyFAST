@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2, Github, Star, AlertCircle, Repeat } from 'lucide-react'
-import { Endpoint, AppConfig } from '../types'
+import { Endpoint, AppConfig, UpdateInfo } from '../types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 import { check, type Update } from '@tauri-apps/plugin-updater'
@@ -44,6 +44,8 @@ export function Settings({
   const [downloadProgress, setDownloadProgress] = useState(0)
   const [downloadTotal, setDownloadTotal] = useState(0)
   const updateRef = useRef<Update | null>(null)
+  // 降级方案：Rust 侧检测到的更新信息（当 Tauri updater 插件失败时使用）
+  const [fallbackUpdateInfo, setFallbackUpdateInfo] = useState<UpdateInfo | null>(null)
 
   // 自启动状态
   const [autostart, setAutostart] = useState(config?.autostart ?? false)
@@ -117,20 +119,35 @@ export function Settings({
     }
   }
 
-  // 检查更新 - 使用 Tauri updater 插件
+  // 检查更新 - 使用 Tauri updater 插件，失败时降级到 Rust 侧检测
   const checkForUpdate = async () => {
     setCheckingUpdate(true)
     setUpdateError(null)
     setUpdateChecked(false)
     updateRef.current = null
+    setFallbackUpdateInfo(null)
     try {
-      const update = await check()
+      const update = await check({ timeout: 15000 })
       if (update) {
         updateRef.current = update
       }
       setUpdateChecked(true)
-    } catch (e) {
-      setUpdateError(String(e))
+    } catch (pluginErr) {
+      // Tauri updater 插件失败，降级到 Rust 侧 check_for_update
+      console.warn('Tauri updater plugin failed, falling back to Rust check:', pluginErr)
+      try {
+        const info = await invoke<UpdateInfo>('check_for_update')
+        if (info.hasUpdate) {
+          setFallbackUpdateInfo(info)
+          setUpdateChecked(true)
+        } else {
+          // 降级方案也确认无更新
+          setUpdateChecked(true)
+        }
+      } catch (fallbackErr) {
+        // 两种方式都失败，显示原始错误
+        setUpdateError(String(pluginErr))
+      }
     } finally {
       setCheckingUpdate(false)
     }
@@ -194,6 +211,9 @@ export function Settings({
     const normalized = error.toLowerCase()
     if (normalized.includes('signature verification failed') || normalized.includes('invalidsignature')) {
       return '当前版本内置更新公钥存在历史错误，请先到 GitHub 手动安装一次最新版；安装后应用内更新将恢复正常。'
+    }
+    if (normalized.includes('error sending request') || normalized.includes('timeout') || normalized.includes('connect error') || normalized.includes('network')) {
+      return '网络连接异常，可能是代理设置或防火墙导致。请检查网络后重试，或直接到 GitHub 下载。'
     }
     return null
   }
@@ -456,8 +476,41 @@ export function Settings({
               </div>
             )}
 
+            {/* 降级方案：Rust 侧检测到有更新（无法应用内更新，提供手动下载） */}
+            {updateChecked && fallbackUpdateInfo && !updateRef.current && !updateError && (
+              <div className="p-3 rounded-xl bg-apple-green/10 border border-apple-green/30">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Download className="w-4 h-4 text-apple-green" />
+                    <span className="text-sm font-medium text-apple-green">发现新版本!</span>
+                  </div>
+                  <p className="text-sm text-apple-gray-600">
+                    最新版本: <span className="font-medium">v{fallbackUpdateInfo.latestVersion}</span>
+                    {fallbackUpdateInfo.publishedAt && (
+                      <span className="text-apple-gray-400 ml-2">
+                        ({new Date(fallbackUpdateInfo.publishedAt).toLocaleDateString('zh-CN')})
+                      </span>
+                    )}
+                  </p>
+                  {fallbackUpdateInfo.releaseNotes && (
+                    <p className="text-xs text-apple-gray-400 line-clamp-3 whitespace-pre-line">{fallbackUpdateInfo.releaseNotes}</p>
+                  )}
+                  <p className="text-xs text-amber-600">应用内自动更新暂时不可用，请手动下载安装。</p>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => open(fallbackUpdateInfo.releaseUrl).catch(console.error)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-green text-white text-sm font-medium rounded-xl hover:bg-apple-green/90 transition-colors"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      前往下载
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* 已是最新版本 */}
-            {updateChecked && !updateRef.current && !updateError && (
+            {updateChecked && !updateRef.current && !fallbackUpdateInfo && !updateError && (
               <div className="p-3 rounded-xl bg-apple-gray-50">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-apple-green" />

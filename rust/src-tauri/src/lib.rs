@@ -735,63 +735,78 @@ const CURRENT_VERSION: &str = env!("APP_VERSION");
 // GitHub 仓库信息
 const GITHUB_REPO: &str = "wangwingzero/anyFAST";
 
-/// 检查更新
+/// 检查更新（带 CDN 代理兜底）
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn check_for_update() -> Result<UpdateInfo, String> {
-    let url = format!(
-        "https://api.github.com/repos/{}/releases/latest",
-        GITHUB_REPO
-    );
+    let urls = [
+        format!(
+            "https://api.github.com/repos/{}/releases/latest",
+            GITHUB_REPO
+        ),
+        format!(
+            "https://gh-proxy.com/https://api.github.com/repos/{}/releases/latest",
+            GITHUB_REPO
+        ),
+    ];
 
     let client = reqwest::Client::builder()
-        .user_agent("anyFAST")
+        .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("请求 GitHub API 失败: {}", e))?;
+    let mut last_err = String::new();
+    for url in &urls {
+        match client.get(url).send().await {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<serde_json::Value>().await {
+                    Ok(release) => {
+                        let latest_version = release["tag_name"]
+                            .as_str()
+                            .unwrap_or("")
+                            .trim_start_matches('v')
+                            .to_string();
 
-    if !response.status().is_success() {
-        return Err(format!("GitHub API 返回错误: {}", response.status()));
+                        let release_notes =
+                            release["body"].as_str().unwrap_or("").to_string();
+                        let release_url = release["html_url"]
+                            .as_str()
+                            .unwrap_or(&format!(
+                                "https://github.com/{}/releases/latest",
+                                GITHUB_REPO
+                            ))
+                            .to_string();
+                        let published_at =
+                            release["published_at"].as_str().unwrap_or("").to_string();
+
+                        let has_update =
+                            compare_versions(&latest_version, CURRENT_VERSION);
+
+                        return Ok(UpdateInfo {
+                            current_version: CURRENT_VERSION.to_string(),
+                            latest_version,
+                            has_update,
+                            release_url,
+                            release_notes,
+                            published_at,
+                        });
+                    }
+                    Err(e) => {
+                        last_err = format!("解析响应失败: {}", e);
+                    }
+                }
+            }
+            Ok(response) => {
+                last_err = format!("API 返回错误: {}", response.status());
+            }
+            Err(e) => {
+                last_err = format!("请求失败: {}", e);
+            }
+        }
     }
 
-    let release: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("解析响应失败: {}", e))?;
-
-    let latest_version = release["tag_name"]
-        .as_str()
-        .unwrap_or("")
-        .trim_start_matches('v')
-        .to_string();
-
-    let release_notes = release["body"].as_str().unwrap_or("").to_string();
-    let release_url = release["html_url"]
-        .as_str()
-        .unwrap_or(&format!(
-            "https://github.com/{}/releases/latest",
-            GITHUB_REPO
-        ))
-        .to_string();
-    let published_at = release["published_at"].as_str().unwrap_or("").to_string();
-
-    // 比较版本号
-    let has_update = compare_versions(&latest_version, CURRENT_VERSION);
-
-    Ok(UpdateInfo {
-        current_version: CURRENT_VERSION.to_string(),
-        latest_version,
-        has_update,
-        release_url,
-        release_notes,
-        published_at,
-    })
+    Err(format!("所有更新检查端点均失败: {}", last_err))
 }
 
 /// 比较版本号，返回 true 如果 latest > current

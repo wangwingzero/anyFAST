@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src ipc: http://ipc.localhost https://api.github.com https://ip.164746.xyz https://ghproxy.net https://ghfast.top https://ghproxy.cc https://github.com"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src ipc: http://ipc.localhost https://api.github.com https://ip.164746.xyz https://gh-proxy.com https://ghfast.top https://cors.isteed.cc https://github.com"
     }
   },
   "bundle": {
@@ -63,9 +63,9 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ0MEIxM0NEMjVFNTY3QkEKUldTNlorVWx6Uk1MUkdheExWVlNUdi9CZEw2aEgxWmF3VHVTVVRRT2I2OVhLVnduTkRiUCt4YjcK",
       "endpoints": [
-        "https://ghproxy.net/https://github.com/wangwingzero/anyFAST/releases/latest/download/latest-cn.json",
+        "https://gh-proxy.com/https://github.com/wangwingzero/anyFAST/releases/latest/download/latest-cn.json",
         "https://ghfast.top/https://github.com/wangwingzero/anyFAST/releases/latest/download/latest-cn.json",
-        "https://ghproxy.cc/https://github.com/wangwingzero/anyFAST/releases/latest/download/latest-cn.json",
+        "https://cors.isteed.cc/github.com/wangwingzero/anyFAST/releases/latest/download/latest-cn.json",
         "https://github.com/wangwingzero/anyFAST/releases/latest/download/latest.json"
       ],
       "windows": {
