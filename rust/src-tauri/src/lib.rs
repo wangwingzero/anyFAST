@@ -903,8 +903,7 @@ async fn force_download_update() -> Result<String, String> {
 
     // 3. 下载安装包到临时目录（带重试）
     let temp_dir = std::env::temp_dir().join("anyfast-update");
-    std::fs::create_dir_all(&temp_dir)
-        .map_err(|e| format!("创建临时目录失败: {}", e))?;
+    std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
     let file_path = temp_dir.join(file_name);
 
     {
@@ -935,10 +934,7 @@ async fn force_download_update() -> Result<String, String> {
             }
         }
         if !success {
-            return Err(format!(
-                "下载安装包失败（已重试 3 次）: {}",
-                last_err
-            ));
+            return Err(format!("下载安装包失败（已重试 3 次）: {}", last_err));
         }
     }
 
