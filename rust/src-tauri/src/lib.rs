@@ -834,6 +834,141 @@ fn get_current_version() -> String {
     CURRENT_VERSION.to_string()
 }
 
+/// 强制下载更新安装包：绕过 Tauri updater 插件，直接从 GitHub Release 下载 .msi 并打开
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn force_download_update() -> Result<String, String> {
+    use std::io::Write;
+
+    let client = reqwest::Client::builder()
+        .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    // 1. 从 GitHub API 获取最新 release 的资产列表
+    let api_url = format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    );
+
+    let release: serde_json::Value = {
+        let mut last_err = String::new();
+        let mut result = None;
+        for attempt in 1..=3u32 {
+            match client.get(&api_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<serde_json::Value>().await {
+                        Ok(json) => {
+                            result = Some(json);
+                            break;
+                        }
+                        Err(e) => last_err = format!("解析 JSON 失败: {}", e),
+                    }
+                }
+                Ok(resp) => last_err = format!("HTTP {}", resp.status()),
+                Err(e) => last_err = format!("{}", e),
+            }
+            if attempt < 3 {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+        result.ok_or_else(|| format!("获取 Release 信息失败（已重试 3 次）: {}", last_err))?
+    };
+
+    // 2. 找到 .msi 或 .exe 安装包的下载 URL
+    let assets = release["assets"]
+        .as_array()
+        .ok_or("Release 中没有找到资产文件")?;
+
+    let installer_asset = assets
+        .iter()
+        .find(|a| {
+            let name = a["name"].as_str().unwrap_or("");
+            name.ends_with(".msi") || (name.ends_with(".exe") && name.contains("setup"))
+        })
+        .or_else(|| {
+            assets
+                .iter()
+                .find(|a| a["name"].as_str().unwrap_or("").ends_with(".exe"))
+        })
+        .ok_or("Release 中没有找到安装包（.msi 或 .exe）")?;
+
+    let download_url = installer_asset["browser_download_url"]
+        .as_str()
+        .ok_or("安装包缺少下载 URL")?;
+    let file_name = installer_asset["name"]
+        .as_str()
+        .unwrap_or("anyFAST-update.msi");
+
+    // 3. 下载安装包到临时目录（带重试）
+    let temp_dir = std::env::temp_dir().join("anyfast-update");
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("创建临时目录失败: {}", e))?;
+    let file_path = temp_dir.join(file_name);
+
+    {
+        let mut last_err = String::new();
+        let mut success = false;
+        for attempt in 1..=3u32 {
+            match client.get(download_url).send().await {
+                Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 302 => {
+                    match resp.bytes().await {
+                        Ok(bytes) => match std::fs::File::create(&file_path) {
+                            Ok(mut f) => match f.write_all(&bytes) {
+                                Ok(_) => {
+                                    success = true;
+                                    break;
+                                }
+                                Err(e) => last_err = format!("写入文件失败: {}", e),
+                            },
+                            Err(e) => last_err = format!("创建文件失败: {}", e),
+                        },
+                        Err(e) => last_err = format!("读取响应失败: {}", e),
+                    }
+                }
+                Ok(resp) => last_err = format!("HTTP {}", resp.status()),
+                Err(e) => last_err = format!("{}", e),
+            }
+            if attempt < 3 {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }
+        if !success {
+            return Err(format!(
+                "下载安装包失败（已重试 3 次）: {}",
+                last_err
+            ));
+        }
+    }
+
+    // 4. 用系统默认方式打开安装包
+    let path_str = file_path.to_string_lossy().to_string();
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| format!("打开安装包失败: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| format!("打开安装包失败: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| format!("打开安装包失败: {}", e))?;
+    }
+
+    Ok(path_str)
+}
+
 /// 更新排查诊断：逐步检查更新链路中的各个环节
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
@@ -846,38 +981,54 @@ async fn diagnose_update() -> Result<Vec<DiagnosticStep>, String> {
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
+    const MAX_RETRIES: u32 = 3;
+
     // Step 1: 测试 GitHub API 连通性
     let api_url = format!(
         "https://api.github.com/repos/{}/releases/latest",
         GITHUB_REPO
     );
-    match client.get(&api_url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            steps.push(DiagnosticStep {
-                name: "GitHub API 连接".into(),
-                status: "ok".into(),
-                detail: "成功连接到 api.github.com".into(),
-            });
+    {
+        let mut last_err = String::new();
+        let mut ok = false;
+        for attempt in 1..=MAX_RETRIES {
+            match client.get(&api_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let detail = if attempt > 1 {
+                        format!("成功连接到 api.github.com（第 {} 次尝试）", attempt)
+                    } else {
+                        "成功连接到 api.github.com".into()
+                    };
+                    steps.push(DiagnosticStep {
+                        name: "GitHub API 连接".into(),
+                        status: "ok".into(),
+                        detail,
+                    });
+                    ok = true;
+                    break;
+                }
+                Ok(resp) => {
+                    last_err = format!("API 返回 HTTP {}", resp.status());
+                }
+                Err(e) => {
+                    last_err = if e.is_timeout() {
+                        "连接超时 — 请检查网络或是否需要 VPN/代理".to_string()
+                    } else if e.is_connect() {
+                        "无法建立连接 — 可能被防火墙或 DNS 拦截".to_string()
+                    } else {
+                        format!("请求失败: {}", e)
+                    };
+                }
+            }
+            if attempt < MAX_RETRIES {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
         }
-        Ok(resp) => {
+        if !ok {
             steps.push(DiagnosticStep {
                 name: "GitHub API 连接".into(),
                 status: "error".into(),
-                detail: format!("API 返回 HTTP {}", resp.status()),
-            });
-        }
-        Err(e) => {
-            let detail = if e.is_timeout() {
-                "连接超时 — 请检查网络或是否需要 VPN/代理".to_string()
-            } else if e.is_connect() {
-                "无法建立连接 — 可能被防火墙或 DNS 拦截".to_string()
-            } else {
-                format!("请求失败: {}", e)
-            };
-            steps.push(DiagnosticStep {
-                name: "GitHub API 连接".into(),
-                status: "error".into(),
-                detail,
+                detail: format!("{}（已重试 {} 次）", last_err, MAX_RETRIES),
             });
         }
     }
@@ -887,49 +1038,58 @@ async fn diagnose_update() -> Result<Vec<DiagnosticStep>, String> {
         "https://github.com/{}/releases/latest/download/latest.json",
         GITHUB_REPO
     );
-    let latest_json_result = match client.get(&updater_url).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>().await {
-            Ok(json) => {
-                steps.push(DiagnosticStep {
-                    name: "latest.json 下载".into(),
-                    status: "ok".into(),
-                    detail: "成功下载更新元数据".into(),
-                });
-                Some(json)
+    let latest_json_result = {
+        let mut last_err = String::new();
+        let mut result: Option<serde_json::Value> = None;
+        for attempt in 1..=MAX_RETRIES {
+            match client.get(&updater_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<serde_json::Value>().await {
+                        Ok(json) => {
+                            let detail = if attempt > 1 {
+                                format!("成功下载更新元数据（第 {} 次尝试）", attempt)
+                            } else {
+                                "成功下载更新元数据".into()
+                            };
+                            steps.push(DiagnosticStep {
+                                name: "latest.json 下载".into(),
+                                status: "ok".into(),
+                                detail,
+                            });
+                            result = Some(json);
+                            break;
+                        }
+                        Err(e) => {
+                            last_err = format!("解析 JSON 失败: {}", e);
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    last_err = format!(
+                        "HTTP {} — 可能尚未发布 latest.json 或 Release 不存在",
+                        resp.status()
+                    );
+                }
+                Err(e) => {
+                    last_err = if e.is_timeout() {
+                        "下载超时 — GitHub 可能暂时不可用或网络受限".to_string()
+                    } else {
+                        format!("下载失败: {}", e)
+                    };
+                }
             }
-            Err(e) => {
-                steps.push(DiagnosticStep {
-                    name: "latest.json 下载".into(),
-                    status: "error".into(),
-                    detail: format!("解析 JSON 失败: {}", e),
-                });
-                None
+            if attempt < MAX_RETRIES {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
-        },
-        Ok(resp) => {
+        }
+        if result.is_none() {
             steps.push(DiagnosticStep {
                 name: "latest.json 下载".into(),
                 status: "error".into(),
-                detail: format!(
-                    "HTTP {} — 可能尚未发布 latest.json 或 Release 不存在",
-                    resp.status()
-                ),
+                detail: format!("{}（已重试 {} 次）", last_err, MAX_RETRIES),
             });
-            None
         }
-        Err(e) => {
-            let detail = if e.is_timeout() {
-                "下载超时 — GitHub 可能暂时不可用或网络受限".to_string()
-            } else {
-                format!("下载失败: {}", e)
-            };
-            steps.push(DiagnosticStep {
-                name: "latest.json 下载".into(),
-                status: "error".into(),
-                detail,
-            });
-            None
-        }
+        result
     };
 
     // Step 3: 验证 latest.json 内容
@@ -981,36 +1141,49 @@ async fn diagnose_update() -> Result<Vec<DiagnosticStep>, String> {
                     detail: "安装包下载 URL 为空".into(),
                 });
             } else {
-                // 测试安装包 URL 可达性（HEAD 请求）
-                match client.head(url).send().await {
-                    Ok(resp)
-                        if resp.status().is_success()
-                            || resp.status().as_u16() == 302
-                            || resp.status().as_u16() == 301 =>
-                    {
-                        steps.push(DiagnosticStep {
-                            name: "安装包可达".into(),
-                            status: "ok".into(),
-                            detail: "安装包 URL 可正常访问".into(),
-                        });
-                    }
-                    Ok(resp) => {
-                        steps.push(DiagnosticStep {
-                            name: "安装包可达".into(),
-                            status: "error".into(),
-                            detail: format!(
+                // 测试安装包 URL 可达性（HEAD 请求，带重试）
+                let mut last_err = String::new();
+                let mut ok = false;
+                for attempt in 1..=MAX_RETRIES {
+                    match client.head(url).send().await {
+                        Ok(resp)
+                            if resp.status().is_success()
+                                || resp.status().as_u16() == 302
+                                || resp.status().as_u16() == 301 =>
+                        {
+                            let detail = if attempt > 1 {
+                                format!("安装包 URL 可正常访问（第 {} 次尝试）", attempt)
+                            } else {
+                                "安装包 URL 可正常访问".into()
+                            };
+                            steps.push(DiagnosticStep {
+                                name: "安装包可达".into(),
+                                status: "ok".into(),
+                                detail,
+                            });
+                            ok = true;
+                            break;
+                        }
+                        Ok(resp) => {
+                            last_err = format!(
                                 "安装包 URL 返回 HTTP {} — 文件可能未上传或已删除",
                                 resp.status()
-                            ),
-                        });
+                            );
+                        }
+                        Err(e) => {
+                            last_err = format!("无法访问安装包: {}", e);
+                        }
                     }
-                    Err(e) => {
-                        steps.push(DiagnosticStep {
-                            name: "安装包可达".into(),
-                            status: "error".into(),
-                            detail: format!("无法访问安装包: {}", e),
-                        });
+                    if attempt < MAX_RETRIES {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     }
+                }
+                if !ok {
+                    steps.push(DiagnosticStep {
+                        name: "安装包可达".into(),
+                        status: "error".into(),
+                        detail: format!("{}（已重试 {} 次）", last_err, MAX_RETRIES),
+                    });
                 }
             }
 
@@ -1510,6 +1683,7 @@ pub fn run() {
             check_for_update,
             get_current_version,
             diagnose_update,
+            force_download_update,
             // 持续优化
             start_continuous_optimization,
             stop_continuous_optimization,

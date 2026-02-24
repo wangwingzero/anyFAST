@@ -27,13 +27,13 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src ipc: http://ipc.localhost https://api.github.com https://ip.164746.xyz https://github.com"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src ipc: http://ipc.localhost https://api.github.com https://ip.164746.xyz https://github.com https://objects.githubusercontent.com https://gh-proxy.com"
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "createUpdaterArtifacts": "v1Compatible",
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -50,9 +50,8 @@
       "timestampUrl": "",
       "nsis": {
         "installerIcon": "icons/icon.ico",
-        "installMode": "perMachine",
-        "displayLanguageSelector": false,
-        "installerHooks": "nsis/hooks.nsi"
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
       }
     }
   },

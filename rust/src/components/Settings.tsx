@@ -47,6 +47,18 @@ export function Settings({
   // 降级方案：Rust 侧检测到的更新信息（当 Tauri updater 插件失败时使用）
   const [fallbackUpdateInfo, setFallbackUpdateInfo] = useState<UpdateInfo | null>(null)
 
+  // 更新日志
+  const [updateLogs, setUpdateLogs] = useState<string[]>([])
+  const [showUpdateLog, setShowUpdateLog] = useState(false)
+  const logRef = useRef<HTMLDivElement>(null)
+  const addLog = (msg: string) => {
+    const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+    setUpdateLogs(prev => [...prev, `[${ts}] ${msg}`])
+  }
+
+  // 强制下载状态
+  const [forceDownloading, setForceDownloading] = useState(false)
+
   // 更新排查诊断
   const [diagnosing, setDiagnosing] = useState(false)
   const [diagnosticSteps, setDiagnosticSteps] = useState<DiagnosticStep[] | null>(null)
@@ -69,6 +81,13 @@ export function Settings({
       setContinuousMode(config.continuous_mode ?? true)
     }
   }, [config])
+
+  // 日志自动滚动到底部
+  useEffect(() => {
+    if (logRef.current && showUpdateLog) {
+      logRef.current.scrollTop = logRef.current.scrollHeight
+    }
+  }, [updateLogs, showUpdateLog])
 
   // 获取当前版本号
   useEffect(() => {
@@ -131,30 +150,44 @@ export function Settings({
     updateRef.current = null
     setFallbackUpdateInfo(null)
     setDiagnosticSteps(null)
+    setUpdateLogs([])
+    addLog('开始检查更新...')
+    addLog('尝试 Tauri updater 插件 (timeout=15s)')
     try {
       const update = await check({ timeout: 15000 })
       if (update) {
         updateRef.current = update
+        addLog(`插件检测到新版本: v${update.version}`)
+        if (update.date) addLog(`发布日期: ${update.date}`)
+      } else {
+        addLog('插件返回: 已是最新版本')
       }
       setUpdateChecked(true)
     } catch (pluginErr) {
       // Tauri updater 插件失败，降级到 Rust 侧 check_for_update
+      addLog(`插件失败: ${String(pluginErr)}`)
+      addLog('降级到 Rust 侧 check_for_update...')
       console.warn('Tauri updater plugin failed, falling back to Rust check:', pluginErr)
       try {
         const info = await invoke<UpdateInfo>('check_for_update')
+        addLog(`Rust 侧返回: 当前 v${info.currentVersion} → 最新 v${info.latestVersion}`)
         if (info.hasUpdate) {
           setFallbackUpdateInfo(info)
           setUpdateChecked(true)
+          addLog('有新版本可用（降级方案，需手动下载）')
         } else {
-          // 降级方案也确认无更新
           setUpdateChecked(true)
+          addLog('Rust 侧确认: 已是最新版本')
         }
       } catch (fallbackErr) {
         // 两种方式都失败，显示原始错误
+        addLog(`Rust 侧也失败: ${String(fallbackErr)}`)
+        addLog('两种更新检查方式均失败')
         setUpdateError(String(pluginErr))
       }
     } finally {
       setCheckingUpdate(false)
+      addLog('检查更新流程结束')
     }
   }
 
@@ -166,6 +199,7 @@ export function Settings({
     setDownloadProgress(0)
     setDownloadTotal(0)
     setUpdateError(null)
+    addLog(`开始下载更新 v${updateRef.current.version}...`)
 
     try {
       let downloaded = 0
@@ -174,6 +208,7 @@ export function Settings({
         switch (event.event) {
           case 'Started':
             setDownloadTotal(event.data.contentLength ?? 0)
+            addLog(`下载开始, 文件大小: ${event.data.contentLength ? formatBytes(event.data.contentLength) : '未知'}`)
             break
           case 'Progress':
             downloaded += event.data.chunkLength
@@ -181,13 +216,17 @@ export function Settings({
             break
           case 'Finished':
             setUpdatePhase('installing')
+            addLog(`下载完成, 共 ${formatBytes(downloaded)}`)
+            addLog('开始安装...')
             break
         }
       })
 
       setUpdatePhase('restarting')
+      addLog('安装完成，准备重启应用...')
       await relaunch()
     } catch (e) {
+      addLog(`更新失败: ${String(e)}`)
       setUpdateError(String(e))
       setUpdatePhase('idle')
     }
@@ -227,10 +266,15 @@ export function Settings({
   const runDiagnostic = async () => {
     setDiagnosing(true)
     setDiagnosticSteps(null)
+    addLog('开始更新排查诊断...')
     try {
       const steps = await invoke<DiagnosticStep[]>('diagnose_update')
       setDiagnosticSteps(steps)
+      for (const step of steps) {
+        addLog(`[诊断] ${step.name} (${step.status}): ${step.detail}`)
+      }
     } catch (e) {
+      addLog(`诊断失败: ${String(e)}`)
       setDiagnosticSteps([{
         name: '排查失败',
         status: 'error' as const,
@@ -238,6 +282,24 @@ export function Settings({
       }])
     } finally {
       setDiagnosing(false)
+      addLog('排查诊断结束')
+    }
+  }
+
+  // 强制下载安装包（绕过 Tauri updater 插件）
+  const forceDownload = async () => {
+    setForceDownloading(true)
+    addLog('开始直接下载安装包...')
+    try {
+      const filePath = await invoke<string>('force_download_update')
+      addLog(`安装包已下载: ${filePath}`)
+      addLog('正在打开安装程序...')
+    } catch (e) {
+      const errMsg = String(e)
+      addLog(`下载失败: ${errMsg}`)
+      setUpdateError(errMsg)
+    } finally {
+      setForceDownloading(false)
     }
   }
 
@@ -394,6 +456,31 @@ export function Settings({
               </div>
             </div>
 
+            {/* 更新日志按钮 + 查看器 */}
+            {updateLogs.length > 0 && (
+              <>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setShowUpdateLog(v => !v)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-apple-gray-400 hover:text-apple-gray-600 transition-colors"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    {showUpdateLog ? '隐藏日志' : '查看更新日志'}
+                  </button>
+                </div>
+                {showUpdateLog && (
+                  <div
+                    ref={logRef}
+                    className="p-3 bg-apple-gray-800 rounded-xl max-h-48 overflow-y-auto font-mono text-xs text-apple-gray-300 space-y-0.5 select-text"
+                  >
+                    {updateLogs.map((line, i) => (
+                      <div key={i} className={line.includes('失败') || line.includes('error') ? 'text-red-400' : ''}>{line}</div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
             {/* 更新错误 */}
             {updateError && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-xl">
@@ -403,6 +490,14 @@ export function Settings({
                   return hint && <p className="text-xs text-red-500 mb-2">{hint}</p>
                 })()}
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={forceDownload}
+                    disabled={forceDownloading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-green text-white text-sm font-medium rounded-xl hover:bg-apple-green/90 transition-colors disabled:opacity-50"
+                  >
+                    <Download className={`w-4 h-4 ${forceDownloading ? 'animate-bounce' : ''}`} />
+                    {forceDownloading ? '下载中...' : '直接下载安装'}
+                  </button>
                   <button
                     onClick={runDiagnostic}
                     disabled={diagnosing}
@@ -519,11 +614,12 @@ export function Settings({
                         立即更新
                       </button>
                       <button
-                        onClick={openReleasePage}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-apple-gray-400 text-xs hover:text-apple-gray-500 transition-colors"
+                        onClick={forceDownload}
+                        disabled={forceDownloading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-apple-gray-500 text-sm font-medium rounded-xl hover:bg-apple-gray-100 transition-colors disabled:opacity-50"
                       >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        手动下载
+                        <Download className={`w-3.5 h-3.5 ${forceDownloading ? 'animate-bounce' : ''}`} />
+                        {forceDownloading ? '下载中...' : '下载安装包'}
                       </button>
                     </div>
                   )}
@@ -550,14 +646,22 @@ export function Settings({
                   {fallbackUpdateInfo.releaseNotes && (
                     <p className="text-xs text-apple-gray-400 line-clamp-3 whitespace-pre-line">{fallbackUpdateInfo.releaseNotes}</p>
                   )}
-                  <p className="text-xs text-amber-600">应用内自动更新暂时不可用，请手动下载安装。</p>
+                  <p className="text-xs text-amber-600">应用内静默更新暂不可用，可直接下载安装包更新。</p>
                   <div className="flex gap-2 mt-2">
                     <button
+                      onClick={forceDownload}
+                      disabled={forceDownloading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-green text-white text-sm font-medium rounded-xl hover:bg-apple-green/90 transition-colors disabled:opacity-50"
+                    >
+                      <Download className={`w-4 h-4 ${forceDownloading ? 'animate-bounce' : ''}`} />
+                      {forceDownloading ? '下载中...' : '直接下载安装'}
+                    </button>
+                    <button
                       onClick={() => open(fallbackUpdateInfo.releaseUrl).catch(console.error)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-green text-white text-sm font-medium rounded-xl hover:bg-apple-green/90 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-apple-gray-500 text-sm font-medium rounded-xl hover:bg-apple-gray-100 transition-colors"
                     >
                       <ExternalLink className="w-4 h-4" />
-                      前往下载
+                      前往 GitHub
                     </button>
                     <button
                       onClick={runDiagnostic}
