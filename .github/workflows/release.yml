@@ -311,8 +311,7 @@ jobs:
           draft: true
           files: |
             rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
-            rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip
-            rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.nsis.zip.sig
+            rust/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe.sig
 
       - name: Upload macOS DMG and Helper
         if: matrix.os == 'macos-latest'
@@ -356,29 +355,29 @@ jobs:
           RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           # Download Windows updater artifacts from the release
+          # With createUpdaterArtifacts: true, Tauri v2 produces .exe + .exe.sig (no .nsis.zip)
           mkdir -p sigs
           gh release download "v${VERSION}" \
             --repo "${{ github.repository }}" \
-            --pattern "*.nsis.zip.sig" \
+            --pattern "*-setup.exe.sig" \
             --dir sigs/
           gh release download "v${VERSION}" \
             --repo "${{ github.repository }}" \
-            --pattern "*.nsis.zip" \
+            --pattern "*-setup.exe" \
             --dir sigs/
 
-          WIN_SIG_FILE=$(ls sigs/*.nsis.zip.sig | head -n1)
-          WIN_ZIP_FILE=$(ls sigs/*.nsis.zip | head -n1)
-          WIN_ZIP_NAME=$(basename "$WIN_ZIP_FILE")
+          WIN_SIG_FILE=$(ls sigs/*-setup.exe.sig | head -n1)
+          WIN_EXE_FILE=$(ls sigs/*-setup.exe | head -n1)
+          WIN_EXE_NAME=$(basename "$WIN_EXE_FILE")
 
           # 验证签名和公钥一致性，避免发布后应用内更新失败
           PUBKEY_B64=$(jq -r '.plugins.updater.pubkey' rust/src-tauri/tauri.conf.json)
           echo "$PUBKEY_B64" | base64 --decode > updater.pub
-          # .sig 文件本身就是 minisign 签名文本，直接用于验证
-          minisign -Vm "$WIN_ZIP_FILE" -x "$WIN_SIG_FILE" -p updater.pub
+          minisign -Vm "$WIN_EXE_FILE" -x "$WIN_SIG_FILE" -p updater.pub
 
           # signature 使用 .sig 文件原始内容
           WIN_SIG=$(cat "$WIN_SIG_FILE")
-          WIN_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${WIN_ZIP_NAME}"
+          WIN_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${WIN_EXE_NAME}"
 
           # Generate latest.json — only NSIS platform keys
           jq -n \
