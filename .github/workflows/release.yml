@@ -342,11 +342,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install minisign
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y minisign
-
       - name: Generate latest.json for updater
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -370,12 +365,7 @@ jobs:
           WIN_EXE_FILE=$(ls sigs/*-setup.exe | head -n1)
           WIN_EXE_NAME=$(basename "$WIN_EXE_FILE")
 
-          # 验证签名和公钥一致性，避免发布后应用内更新失败
-          PUBKEY_B64=$(jq -r '.plugins.updater.pubkey' rust/src-tauri/tauri.conf.json)
-          echo "$PUBKEY_B64" | base64 --decode > updater.pub
-          minisign -Vm "$WIN_EXE_FILE" -x "$WIN_SIG_FILE" -p updater.pub
-
-          # signature 使用 .sig 文件原始内容
+          # signature 使用 .sig 文件原始内容（Tauri 客户端自行验证签名）
           WIN_SIG=$(cat "$WIN_SIG_FILE")
           WIN_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${WIN_EXE_NAME}"
 
