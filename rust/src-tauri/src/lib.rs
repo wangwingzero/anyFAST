@@ -895,6 +895,7 @@ fn detect_system_proxy() -> Option<String> {
     None
 }
 
+#[cfg(feature = "tauri-runtime")]
 /// 根据代理配置构建 reqwest ClientBuilder（禁用默认系统代理，避免双重代理冲突）
 fn apply_proxy_setting(
     builder: reqwest::ClientBuilder,
