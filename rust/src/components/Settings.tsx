@@ -440,6 +440,53 @@ export function Settings({
               </div>
             </label>
 
+          </div>
+        </Section>
+
+        {/* Advanced */}
+        <Section icon={<FileText className="w-5 h-5" />} title="高级">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-3 bg-apple-gray-50 rounded-xl">
+              <div className="flex-1 min-w-0 mr-3">
+                <span className="text-sm text-apple-gray-600">Hosts 文件</span>
+                <p className="text-xs text-apple-gray-400 mt-0.5">手动编辑系统 hosts 文件</p>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    await invoke('open_hosts_file')
+                  } catch (e) {
+                    console.error('Failed to open hosts file:', e)
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-gray-200 text-apple-gray-600 text-sm font-medium rounded-xl hover:bg-apple-gray-300 transition-colors flex-shrink-0"
+              >
+                <ExternalLink className="w-4 h-4" />
+                打开
+              </button>
+            </div>
+          </div>
+        </Section>
+
+        {/* About & Update */}
+        <Section icon={<Info className="w-5 h-5" />} title="关于">
+          <div className="space-y-3">
+            {/* 当前版本 */}
+            <div className="flex items-center justify-between p-3 bg-apple-gray-50 rounded-xl">
+              <div className="flex-1 min-w-0 mr-3">
+                <span className="text-sm text-apple-gray-600">当前版本</span>
+                <p className="text-xs text-apple-gray-400 mt-0.5">anyFAST v{currentVersion || '...'}</p>
+              </div>
+              <button
+                onClick={checkForUpdate}
+                disabled={checkingUpdate || updatePhase !== 'idle'}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-blue text-white text-sm font-medium rounded-xl hover:bg-apple-blue/90 transition-colors flex-shrink-0 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${checkingUpdate ? 'animate-spin' : ''}`} />
+                {checkingUpdate ? '检查中...' : '检查更新'}
+              </button>
+            </div>
+
             {/* 更新代理设置 */}
             <div className="p-3 bg-apple-gray-50 rounded-xl space-y-2.5">
               <div className="flex items-center gap-2">
@@ -546,53 +593,6 @@ export function Settings({
                   </div>
                 )}
               </div>
-            </div>
-
-          </div>
-        </Section>
-
-        {/* Advanced */}
-        <Section icon={<FileText className="w-5 h-5" />} title="高级">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between p-3 bg-apple-gray-50 rounded-xl">
-              <div className="flex-1 min-w-0 mr-3">
-                <span className="text-sm text-apple-gray-600">Hosts 文件</span>
-                <p className="text-xs text-apple-gray-400 mt-0.5">手动编辑系统 hosts 文件</p>
-              </div>
-              <button
-                onClick={async () => {
-                  try {
-                    await invoke('open_hosts_file')
-                  } catch (e) {
-                    console.error('Failed to open hosts file:', e)
-                  }
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-gray-200 text-apple-gray-600 text-sm font-medium rounded-xl hover:bg-apple-gray-300 transition-colors flex-shrink-0"
-              >
-                <ExternalLink className="w-4 h-4" />
-                打开
-              </button>
-            </div>
-          </div>
-        </Section>
-
-        {/* About & Update */}
-        <Section icon={<Info className="w-5 h-5" />} title="关于">
-          <div className="space-y-3">
-            {/* 当前版本 */}
-            <div className="flex items-center justify-between p-3 bg-apple-gray-50 rounded-xl">
-              <div className="flex-1 min-w-0 mr-3">
-                <span className="text-sm text-apple-gray-600">当前版本</span>
-                <p className="text-xs text-apple-gray-400 mt-0.5">anyFAST v{currentVersion || '...'}</p>
-              </div>
-              <button
-                onClick={checkForUpdate}
-                disabled={checkingUpdate || updatePhase !== 'idle'}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-blue text-white text-sm font-medium rounded-xl hover:bg-apple-blue/90 transition-colors flex-shrink-0 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${checkingUpdate ? 'animate-spin' : ''}`} />
-                {checkingUpdate ? '检查中...' : '检查更新'}
-              </button>
             </div>
 
             {/* GitHub 仓库 */}
