@@ -283,8 +283,25 @@ export function Settings({
       addLog('安装完成，准备重启应用...')
       await relaunch()
     } catch (e) {
-      addLog(`更新失败: ${String(e)}`)
-      setUpdateError(String(e))
+      const errMsg = String(e)
+      addLog(`更新失败: ${errMsg}`)
+
+      // Tauri updater 插件下载失败（常见于代理未透传），自动降级到 Rust 侧直接下载
+      if (errMsg.includes('decoding response body') || errMsg.includes('error sending request') || errMsg.includes('connect error')) {
+        addLog('检测到下载通道异常，自动切换到直接下载方式...')
+        try {
+          setUpdatePhase('downloading')
+          const filePath = await invoke<string>('force_download_update')
+          addLog(`安装包已下载: ${filePath}`)
+          addLog('正在打开安装程序...')
+          setUpdatePhase('idle')
+          return
+        } catch (fallbackErr) {
+          addLog(`直接下载也失败: ${String(fallbackErr)}`)
+        }
+      }
+
+      setUpdateError(errMsg)
       setUpdatePhase('idle')
     }
   }

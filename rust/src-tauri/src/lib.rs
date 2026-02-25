@@ -1671,7 +1671,22 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            // 将用户配置的代理写入环境变量，让 Tauri updater 插件内部的 HTTP client 也能走代理
             let config_manager = ConfigManager::new();
+            {
+                let cfg = config_manager.load().unwrap_or_default();
+                let proxy_url = if cfg.update_proxy == "auto" {
+                    detect_system_proxy()
+                } else if cfg.update_proxy.is_empty() {
+                    None
+                } else {
+                    Some(cfg.update_proxy.clone())
+                };
+                if let Some(url) = proxy_url {
+                    std::env::set_var("HTTPS_PROXY", &url);
+                    std::env::set_var("HTTP_PROXY", &url);
+                }
+            }
 
             let state = AppState {
                 config_manager: config_manager.clone(),
