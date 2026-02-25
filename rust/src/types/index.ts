@@ -29,6 +29,7 @@ export interface AppConfig {
   preferred_ips: string[]
   continuous_mode: boolean
   test_aggressiveness: number
+  update_proxy: string
 }
 
 export interface Progress {

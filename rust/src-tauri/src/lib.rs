@@ -749,9 +749,29 @@ async fn check_for_update() -> Result<UpdateInfo, String> {
         GITHUB_REPO
     )];
 
-    let client = reqwest::Client::builder()
+    // 读取代理配置
+    let proxy_setting = {
+        let cfg = ConfigManager::new().load().unwrap_or_default();
+        cfg.update_proxy.clone()
+    };
+    let mut builder = reqwest::Client::builder()
         .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(10));
+
+    let proxy_url = if proxy_setting == "auto" {
+        detect_system_proxy()
+    } else if proxy_setting.is_empty() {
+        None
+    } else {
+        Some(proxy_setting)
+    };
+    if let Some(ref url) = proxy_url {
+        if let Ok(proxy) = reqwest::Proxy::all(url) {
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    let client = builder
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
@@ -834,15 +854,89 @@ fn get_current_version() -> String {
     CURRENT_VERSION.to_string()
 }
 
+/// 检测系统 HTTP 代理设置（Windows 从注册表读取，其他从环境变量读取）
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+fn detect_system_proxy() -> Option<String> {
+    // 1. 优先检查环境变量
+    if let Ok(proxy) = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")) {
+        if !proxy.is_empty() {
+            return Some(proxy);
+        }
+    }
+    if let Ok(proxy) = std::env::var("HTTP_PROXY").or_else(|_| std::env::var("http_proxy")) {
+        if !proxy.is_empty() {
+            return Some(proxy);
+        }
+    }
+
+    // 2. Windows: 从注册表读取系统代理
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+        if let Ok(key) = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+        {
+            let enabled: u32 = key.get_value("ProxyEnable").unwrap_or(0);
+            if enabled == 1 {
+                if let Ok(server) = key.get_value::<String, _>("ProxyServer") {
+                    if !server.is_empty() {
+                        // 注册表可能存储 "host:port" 或 "http=host:port;https=host:port;socks=host:port"
+                        if server.contains('=') {
+                            // 多协议格式，优先取 http 代理
+                            for part in server.split(';') {
+                                let part = part.trim();
+                                if part.starts_with("http=") {
+                                    let addr = part.trim_start_matches("http=");
+                                    if !addr.is_empty() {
+                                        return Some(format!("http://{}", addr));
+                                    }
+                                }
+                            }
+                        } else {
+                            // 单一代理格式 "host:port"
+                            return Some(format!("http://{}", server));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// 强制下载更新安装包：绕过 Tauri updater 插件，直接从 GitHub Release 下载 .msi 并打开
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn force_download_update() -> Result<String, String> {
     use std::io::Write;
 
-    let client = reqwest::Client::builder()
+    // 读取代理配置
+    let proxy_setting = {
+        let cfg = ConfigManager::new().load().unwrap_or_default();
+        cfg.update_proxy.clone()
+    };
+    let mut builder = reqwest::Client::builder()
         .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(120));
+
+    // 解析代理
+    let proxy_url = if proxy_setting == "auto" {
+        detect_system_proxy()
+    } else if proxy_setting.is_empty() {
+        None
+    } else {
+        Some(proxy_setting)
+    };
+    if let Some(ref url) = proxy_url {
+        if let Ok(proxy) = reqwest::Proxy::all(url) {
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    let client = builder
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
@@ -971,9 +1065,29 @@ async fn force_download_update() -> Result<String, String> {
 async fn diagnose_update() -> Result<Vec<DiagnosticStep>, String> {
     let mut steps = Vec::new();
 
-    let client = reqwest::Client::builder()
+    // 读取代理配置
+    let proxy_setting = {
+        let cfg = ConfigManager::new().load().unwrap_or_default();
+        cfg.update_proxy.clone()
+    };
+    let mut builder = reqwest::Client::builder()
         .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(15));
+
+    let proxy_url = if proxy_setting == "auto" {
+        detect_system_proxy()
+    } else if proxy_setting.is_empty() {
+        None
+    } else {
+        Some(proxy_setting)
+    };
+    if let Some(ref url) = proxy_url {
+        if let Ok(proxy) = reqwest::Proxy::all(url) {
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    let client = builder
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
@@ -1678,6 +1792,7 @@ pub fn run() {
             // 更新检查
             check_for_update,
             get_current_version,
+            detect_system_proxy,
             diagnose_update,
             force_download_update,
             // 持续优化

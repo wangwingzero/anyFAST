@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2, Github, Star, AlertCircle, Repeat, Search, XCircle } from 'lucide-react'
+import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2, Github, Star, AlertCircle, Repeat, Search, XCircle, Globe } from 'lucide-react'
 import { Endpoint, AppConfig, UpdateInfo, DiagnosticStep } from '../types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
@@ -71,6 +71,12 @@ export function Settings({
   const [continuousMode, setContinuousMode] = useState(config?.continuous_mode ?? true)
   const [continuousModeLoading, setContinuousModeLoading] = useState(false)
 
+  // 更新代理状态
+  const [updateProxy, setUpdateProxy] = useState(config?.update_proxy ?? 'auto')
+  const [customProxy, setCustomProxy] = useState('')
+  const [proxyLoading, setProxyLoading] = useState(false)
+  const [detectedProxy, setDetectedProxy] = useState<string | null>(null)
+
   const initializedRef = useRef(false)
 
   // 初始化
@@ -79,6 +85,14 @@ export function Settings({
     if (!initializedRef.current) {
       initializedRef.current = true
       setContinuousMode(config.continuous_mode ?? true)
+      const proxy = config.update_proxy ?? 'auto'
+      setUpdateProxy(proxy)
+      // 如果是自定义代理地址，填入输入框
+      if (proxy !== 'auto' && proxy !== '') {
+        setCustomProxy(proxy)
+      }
+      // 自动检测系统代理（仅展示）
+      invoke<string | null>('detect_system_proxy').then(setDetectedProxy).catch(() => {})
     }
   }, [config])
 
@@ -142,6 +156,22 @@ export function Settings({
     }
   }
 
+  // 更新代理设置
+  const saveProxySetting = async (value: string) => {
+    if (!config) return
+    setProxyLoading(true)
+    try {
+      const newConfig: AppConfig = { ...config, update_proxy: value }
+      await invoke('save_config', { config: newConfig })
+      onConfigChange(newConfig)
+      setUpdateProxy(value)
+    } catch (e) {
+      console.error('Failed to save proxy setting:', e)
+    } finally {
+      setProxyLoading(false)
+    }
+  }
+
   // 检查更新 - 使用 Tauri updater 插件，失败时降级到 Rust 侧检测
   const checkForUpdate = async () => {
     setCheckingUpdate(true)
@@ -152,9 +182,36 @@ export function Settings({
     setDiagnosticSteps(null)
     setUpdateLogs([])
     addLog('开始检查更新...')
-    addLog('尝试 Tauri updater 插件 (timeout=15s)')
+
+    // 解析代理地址
+    let proxyUrl: string | undefined
+    const proxySetting = config?.update_proxy ?? 'auto'
+    if (proxySetting === 'auto') {
+      addLog('自动检测系统代理...')
+      try {
+        const detected = await invoke<string | null>('detect_system_proxy')
+        if (detected) {
+          proxyUrl = detected
+          addLog(`检测到系统代理: ${detected}`)
+        } else {
+          addLog('未检测到系统代理，直连')
+        }
+      } catch {
+        addLog('代理检测失败，直连')
+      }
+    } else if (proxySetting) {
+      proxyUrl = proxySetting
+      addLog(`使用手动代理: ${proxySetting}`)
+    } else {
+      addLog('代理已禁用，直连')
+    }
+
+    const checkOpts: { timeout: number; proxy?: string } = { timeout: 30000 }
+    if (proxyUrl) checkOpts.proxy = proxyUrl
+
+    addLog(`尝试 Tauri updater 插件 (timeout=30s${proxyUrl ? ', proxy=' + proxyUrl : ''})`)
     try {
-      const update = await check({ timeout: 15000 })
+      const update = await check(checkOpts)
       if (update) {
         updateRef.current = update
         addLog(`插件检测到新版本: v${update.version}`)
@@ -317,6 +374,7 @@ export function Settings({
       preferred_ips: [],
       continuous_mode: config?.continuous_mode ?? true,  // 保持当前持续优化设置
       test_aggressiveness: config?.test_aggressiveness ?? 2,
+      update_proxy: 'auto',
     }
     try {
       await invoke('save_config', { config: newConfig })
@@ -381,6 +439,114 @@ export function Settings({
                 />
               </div>
             </label>
+
+            {/* 更新代理设置 */}
+            <div className="p-3 bg-apple-gray-50 rounded-xl space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-apple-gray-400" />
+                <span className="text-sm text-apple-gray-600">更新代理</span>
+                {proxyLoading && <Loader2 className="w-3 h-3 animate-spin text-apple-gray-400" />}
+              </div>
+              <p className="text-xs text-apple-gray-400 ml-6">检查更新时使用的网络代理</p>
+
+              <div className="ml-6 space-y-2">
+                {/* 自动检测 */}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="update_proxy"
+                    checked={updateProxy === 'auto'}
+                    onChange={() => saveProxySetting('auto')}
+                    disabled={proxyLoading}
+                    className="w-3.5 h-3.5 accent-apple-blue"
+                  />
+                  <span className="text-sm text-apple-gray-600">自动检测</span>
+                  {updateProxy === 'auto' && detectedProxy && (
+                    <span className="text-xs text-apple-gray-400">({detectedProxy})</span>
+                  )}
+                  {updateProxy === 'auto' && !detectedProxy && (
+                    <span className="text-xs text-apple-gray-400">(未检测到代理)</span>
+                  )}
+                </label>
+
+                {/* 不使用代理 */}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="update_proxy"
+                    checked={updateProxy === ''}
+                    onChange={() => saveProxySetting('')}
+                    disabled={proxyLoading}
+                    className="w-3.5 h-3.5 accent-apple-blue"
+                  />
+                  <span className="text-sm text-apple-gray-600">直连（不使用代理）</span>
+                </label>
+
+                {/* 手动指定 */}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="update_proxy"
+                    checked={updateProxy !== 'auto' && updateProxy !== ''}
+                    onChange={() => {
+                      const val = customProxy || 'http://127.0.0.1:7890'
+                      setCustomProxy(val)
+                      saveProxySetting(val)
+                    }}
+                    disabled={proxyLoading}
+                    className="w-3.5 h-3.5 accent-apple-blue"
+                  />
+                  <span className="text-sm text-apple-gray-600">手动指定</span>
+                </label>
+
+                {/* 手动输入框 + 预设 */}
+                {updateProxy !== 'auto' && updateProxy !== '' && (
+                  <div className="ml-5.5 space-y-2">
+                    <input
+                      type="text"
+                      value={customProxy}
+                      onChange={(e) => setCustomProxy(e.target.value)}
+                      onBlur={() => {
+                        if (customProxy && customProxy !== updateProxy) {
+                          saveProxySetting(customProxy)
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && customProxy) {
+                          saveProxySetting(customProxy)
+                        }
+                      }}
+                      placeholder="http://127.0.0.1:7890"
+                      className="w-full px-3 py-1.5 text-sm bg-white border border-apple-gray-200 rounded-lg text-apple-gray-600 placeholder-apple-gray-300 focus:outline-none focus:border-apple-blue focus:ring-1 focus:ring-apple-blue/30"
+                    />
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { label: 'Clash', value: 'http://127.0.0.1:7890' },
+                        { label: 'V2Ray', value: 'http://127.0.0.1:10809' },
+                        { label: 'SS', value: 'http://127.0.0.1:1080' },
+                        { label: 'Surge', value: 'http://127.0.0.1:6152' },
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          onClick={() => {
+                            setCustomProxy(preset.value)
+                            saveProxySetting(preset.value)
+                          }}
+                          disabled={proxyLoading}
+                          className={`px-2 py-0.5 text-xs rounded-md transition-colors ${
+                            customProxy === preset.value
+                              ? 'bg-apple-blue text-white'
+                              : 'bg-apple-gray-200 text-apple-gray-500 hover:bg-apple-gray-300'
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
 
           </div>
         </Section>

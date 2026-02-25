@@ -44,6 +44,7 @@ describe('Dashboard', () => {
     preferred_ips: [],
     continuous_mode: true,
     test_aggressiveness: 2,
+    update_proxy: 'auto',
   }
 
   const defaultProps = {

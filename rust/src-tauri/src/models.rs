@@ -167,6 +167,9 @@ pub struct AppConfig {
     pub continuous_mode: bool,
     #[serde(default = "default_test_aggressiveness")]
     pub test_aggressiveness: u32,
+    /// 更新代理地址: "auto" = 自动检测系统代理, "" = 不使用代理, 其他 = 手动指定
+    #[serde(default = "default_update_proxy")]
+    pub update_proxy: String,
 }
 
 impl Default for AppConfig {
@@ -181,6 +184,7 @@ impl Default for AppConfig {
             preferred_ips: default_preferred_ips(),
             continuous_mode: default_continuous_mode(),
             test_aggressiveness: default_test_aggressiveness(),
+            update_proxy: default_update_proxy(),
         }
     }
 }
@@ -230,6 +234,10 @@ fn default_continuous_mode() -> bool {
 fn default_test_aggressiveness() -> u32 {
     2
 } // 1=保守, 2=标准, 3=激进
+
+fn default_update_proxy() -> String {
+    "auto".into()
+} // "auto" = 自动检测, "" = 不使用, 其他 = 手动指定
 
 /// 测速进度事件类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
