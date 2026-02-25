@@ -292,15 +292,17 @@ async fn apply_all_endpoints(state: State<'_, AppState>) -> Result<u32, String> 
     let mut baseline_updates: Vec<(String, f64)> = Vec::with_capacity(best_by_domain.len());
 
     for r in results_snapshot.iter().filter(|r| r.success) {
-        // 记录历史
-        history_records.push(HistoryRecord {
-            timestamp: now,
-            domain: extract_target_domain(&r.endpoint),
-            original_latency: r.original_latency,
-            optimized_latency: r.latency,
-            speedup_percent: r.speedup_percent,
-            applied: true, // 总是应用
-        });
+        // 只记录有实际加速效果的历史（跳过原始==优化的无效记录）
+        if r.speedup_percent.abs() > 0.1 {
+            history_records.push(HistoryRecord {
+                timestamp: now,
+                domain: extract_target_domain(&r.endpoint),
+                original_latency: r.original_latency,
+                optimized_latency: r.latency,
+                speedup_percent: r.speedup_percent,
+                applied: true,
+            });
+        }
     }
 
     for (domain, (ip, latency)) in best_by_domain {

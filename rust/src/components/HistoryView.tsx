@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import {
   BarChart3,
   Clock,
@@ -55,6 +56,23 @@ export function HistoryView() {
 
   useEffect(() => {
     loadStats()
+  }, [loadStats])
+
+  // 监听优化事件，自动刷新历史数据
+  useEffect(() => {
+    const setupListener = async () => {
+      const unlisten = await listen<{ event_type: string }>('optimization-event', (event) => {
+        const t = event.payload.event_type
+        if (t === 'CheckComplete' || t === 'TestComplete' || t === 'AutoSwitch') {
+          loadStats()
+        }
+      })
+      return unlisten
+    }
+    const promise = setupListener()
+    return () => {
+      promise.then((unlisten) => unlisten())
+    }
   }, [loadStats])
 
   const handleClearHistory = async () => {
