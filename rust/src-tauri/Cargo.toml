@@ -1,6 +1,6 @@
 [package]
 name = "anyfast"
-version = "2.5.3"
+version = "2.5.4"
 description = "anyFAST - 中转站端点优选工具"
 authors = ["hudawang"]
 edition = "2021"
