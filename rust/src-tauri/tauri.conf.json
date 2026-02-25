@@ -65,7 +65,7 @@
       "open": true
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ0MEIxM0NEMjVFNTY3QkEKUldTNlorVWx6Uk1MUkdheExWVlNUdi9CZEw2aEgxWmF3VHVTVVRRT2I2OVhLVnduTkRiUCt4YjcK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxMDRFRTI2RTdERTI4RDAKUldUUUtON25KdTRFd1ZGTytDT3hCQWFCWWRmWEhCcVFHS0o1TWV3SVB4WVBjTTlZR2c0SGZueVYK",
       "endpoints": [
         "https://github.com/wangwingzero/anyFAST/releases/latest/download/latest.json"
       ],
