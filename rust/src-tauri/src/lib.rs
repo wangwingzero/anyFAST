@@ -754,22 +754,10 @@ async fn check_for_update() -> Result<UpdateInfo, String> {
         let cfg = ConfigManager::new().load().unwrap_or_default();
         cfg.update_proxy.clone()
     };
-    let mut builder = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
         .timeout(std::time::Duration::from_secs(10));
-
-    let proxy_url = if proxy_setting == "auto" {
-        detect_system_proxy()
-    } else if proxy_setting.is_empty() {
-        None
-    } else {
-        Some(proxy_setting)
-    };
-    if let Some(ref url) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(url) {
-            builder = builder.proxy(proxy);
-        }
-    }
+    let builder = apply_proxy_setting(builder, &proxy_setting);
 
     let client = builder
         .build()
@@ -907,6 +895,31 @@ fn detect_system_proxy() -> Option<String> {
     None
 }
 
+/// 根据代理配置构建 reqwest ClientBuilder（禁用默认系统代理，避免双重代理冲突）
+fn apply_proxy_setting(
+    builder: reqwest::ClientBuilder,
+    proxy_setting: &str,
+) -> reqwest::ClientBuilder {
+    // 先禁用 reqwest 默认的系统代理检测，确保代理行为完全由我们控制
+    let builder = builder.no_proxy();
+
+    let proxy_url = if proxy_setting == "auto" {
+        detect_system_proxy()
+    } else if proxy_setting.is_empty() {
+        None
+    } else {
+        Some(proxy_setting.to_string())
+    };
+
+    if let Some(ref url) = proxy_url {
+        if let Ok(proxy) = reqwest::Proxy::all(url) {
+            return builder.proxy(proxy);
+        }
+    }
+
+    builder
+}
+
 /// 强制下载更新安装包：绕过 Tauri updater 插件，直接从 GitHub Release 下载 .msi 并打开
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
@@ -918,23 +931,10 @@ async fn force_download_update() -> Result<String, String> {
         let cfg = ConfigManager::new().load().unwrap_or_default();
         cfg.update_proxy.clone()
     };
-    let mut builder = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
         .timeout(std::time::Duration::from_secs(120));
-
-    // 解析代理
-    let proxy_url = if proxy_setting == "auto" {
-        detect_system_proxy()
-    } else if proxy_setting.is_empty() {
-        None
-    } else {
-        Some(proxy_setting)
-    };
-    if let Some(ref url) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(url) {
-            builder = builder.proxy(proxy);
-        }
-    }
+    let builder = apply_proxy_setting(builder, &proxy_setting);
 
     let client = builder
         .build()
@@ -1070,22 +1070,10 @@ async fn diagnose_update() -> Result<Vec<DiagnosticStep>, String> {
         let cfg = ConfigManager::new().load().unwrap_or_default();
         cfg.update_proxy.clone()
     };
-    let mut builder = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
         .timeout(std::time::Duration::from_secs(15));
-
-    let proxy_url = if proxy_setting == "auto" {
-        detect_system_proxy()
-    } else if proxy_setting.is_empty() {
-        None
-    } else {
-        Some(proxy_setting)
-    };
-    if let Some(ref url) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(url) {
-            builder = builder.proxy(proxy);
-        }
-    }
+    let builder = apply_proxy_setting(builder, &proxy_setting);
 
     let client = builder
         .build()
