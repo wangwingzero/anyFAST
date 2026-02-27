@@ -40,6 +40,7 @@ interface DashboardProps {
   results: EndpointResult[]
   isRunning: boolean
   bindingCount: number
+  boundDomains: Set<string>
   testingDomains: Set<string>
   config: AppConfig | null
   isOptimizing?: boolean
@@ -59,6 +60,7 @@ export function Dashboard({
   results,
   isRunning,
   bindingCount,
+  boundDomains,
   testingDomains,
   config,
   isOptimizing,
@@ -305,7 +307,7 @@ export function Dashboard({
                   result={result}
                   isTesting={isTesting}
                   onApply={result ? () => onApply(result) : undefined}
-                  onUnbind={() => onUnbindEndpoint(endpoint.domain)}
+                  onUnbind={boundDomains.has(endpoint.domain) ? () => onUnbindEndpoint(endpoint.domain) : undefined}
                   onTestSingle={() => onTestSingle(endpoint)}
                   onDelete={onEndpointsChange ? () => removeEndpointByDomain(endpoint.domain) : undefined}
                   bindingCount={bindingCount}

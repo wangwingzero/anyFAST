@@ -36,6 +36,7 @@ function App() {
   const [, setProgress] = useState({ current: 0, total: 0, message: '就绪' })
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [bindingCount, setBindingCount] = useState(0)
+  const [boundDomains, setBoundDomains] = useState<Set<string>>(new Set())
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [toasts, setToasts] = useState<ToastData[]>([])
   const [showAdminDialog, setShowAdminDialog] = useState(false)
@@ -236,10 +237,19 @@ function App() {
 
   const refreshBindingCount = useCallback(async () => {
     try {
-      const count = await invoke<number>('get_binding_count')
+      const bindings = await invoke<[string, string | null][]>('get_bindings')
+      const bound = new Set<string>()
+      let count = 0
+      for (const [domain, ip] of bindings) {
+        if (ip) {
+          bound.add(domain)
+          count++
+        }
+      }
+      setBoundDomains(bound)
       setBindingCount(count)
     } catch (e) {
-      console.error('Failed to get binding count:', e)
+      console.error('Failed to get bindings:', e)
     }
   }, [])
 
@@ -742,6 +752,7 @@ function App() {
             results={results}
             isRunning={isRunning}
             bindingCount={bindingCount}
+            boundDomains={boundDomains}
             testingDomains={testingDomains}
             config={config}
             isOptimizing={isOptimizing}

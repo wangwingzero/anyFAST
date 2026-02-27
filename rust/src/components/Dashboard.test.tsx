@@ -52,6 +52,7 @@ describe('Dashboard', () => {
     results: [] as EndpointResult[],
     isRunning: false,
     bindingCount: 0,
+    boundDomains: new Set<string>(),
     testingDomains: new Set<string>(),
     config: mockConfig,
     onApply: vi.fn(),
