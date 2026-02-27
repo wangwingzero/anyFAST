@@ -181,7 +181,8 @@ describe('Dashboard', () => {
   })
 
   it('shows per-endpoint unbind buttons', () => {
-    render(<Dashboard {...defaultProps} results={mockResults} />)
+    const bound = new Set(['test1.com', 'test2.com'])
+    render(<Dashboard {...defaultProps} results={mockResults} boundDomains={bound} />)
 
     const unbindButtons = screen.getAllByTitle('解绑 hosts')
     expect(unbindButtons).toHaveLength(2)
@@ -189,7 +190,8 @@ describe('Dashboard', () => {
 
   it('calls onUnbindEndpoint when clicking per-endpoint unbind button', () => {
     const onUnbindEndpoint = vi.fn()
-    render(<Dashboard {...defaultProps} results={mockResults} onUnbindEndpoint={onUnbindEndpoint} />)
+    const bound = new Set(['test1.com', 'test2.com'])
+    render(<Dashboard {...defaultProps} results={mockResults} boundDomains={bound} onUnbindEndpoint={onUnbindEndpoint} />)
 
     const unbindButtons = screen.getAllByTitle('解绑 hosts')
     fireEvent.click(unbindButtons[0])

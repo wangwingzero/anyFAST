@@ -38,8 +38,8 @@ describe('App', () => {
       switch (cmd) {
         case 'get_config':
           return mockConfig
-        case 'get_binding_count':
-          return 0
+        case 'get_bindings':
+          return []
         case 'check_admin':
           return true
         case 'get_permission_status':
@@ -84,7 +84,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('get_binding_count')
+      expect(invoke).toHaveBeenCalledWith('get_bindings')
     })
   })
 
