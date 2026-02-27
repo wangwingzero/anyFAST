@@ -1,7 +1,10 @@
 import { useState } from 'react'
-import { CheckCircle2, Zap, Globe, Link2, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download, CloudDownload } from 'lucide-react'
+import { CheckCircle2, Zap, Globe, Link2, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download, CloudDownload, GripVertical } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { Endpoint, EndpointResult, AppConfig } from '../types'
 import { ImportEndpointsDialog } from './ImportEndpointsDialog'
 
@@ -89,6 +92,27 @@ export function Dashboard({
   const availableCount = results.filter((r) => r.success && !r.use_original).length
   const enabledEndpoints = endpoints.filter((e) => e.enabled)
   const enabledCount = enabledEndpoints.length
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id || !onEndpointsChange) return
+
+    const enabledDomains = enabledEndpoints.map(e => e.domain)
+    const oldIndex = enabledDomains.indexOf(active.id as string)
+    const newIndex = enabledDomains.indexOf(over.id as string)
+    if (oldIndex === -1 || newIndex === -1) return
+
+    const reorderedEnabled = arrayMove(enabledEndpoints, oldIndex, newIndex)
+    const disabledEndpoints = endpoints.filter(e => !e.enabled)
+    const newEndpoints = [...reorderedEnabled, ...disabledEndpoints]
+    onEndpointsChange(newEndpoints)
+    onSaveConfig?.(newEndpoints)
+  }
 
   const addEndpoint = () => {
     if (!newUrl.trim() || !onEndpointsChange) return
@@ -279,7 +303,8 @@ export function Dashboard({
         {/* Table Container with horizontal scroll */}
         <div className="flex-1 overflow-auto min-h-0">
           {/* Table Header */}
-          <div className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_minmax(140px,180px)_90px_120px] lg:grid-cols-[40px_1fr_1fr_minmax(180px,220px)_120px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
+          <div className="grid grid-cols-[20px_32px_minmax(60px,1fr)_minmax(80px,1fr)_minmax(140px,180px)_90px_120px] lg:grid-cols-[24px_40px_1fr_1fr_minmax(180px,220px)_120px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2 text-xs text-apple-gray-400 border-b border-apple-gray-100 sticky top-0 bg-white/90 backdrop-blur-sm">
+            <span></span>
             <span>#</span>
             <span>名称</span>
             <span>域名</span>
@@ -296,24 +321,29 @@ export function Dashboard({
               <p className="text-sm">请先添加端点</p>
             </div>
           ) : (
-            enabledEndpoints.map((endpoint, index) => {
-              const result = results.find(r => r.endpoint.domain === endpoint.domain)
-              const isTesting = testingDomains.has(endpoint.domain)
-              return (
-                <ResultRow
-                  key={endpoint.domain}
-                  rank={index + 1}
-                  endpoint={endpoint}
-                  result={result}
-                  isTesting={isTesting}
-                  onApply={result ? () => onApply(result) : undefined}
-                  onUnbind={boundDomains.has(endpoint.domain) ? () => onUnbindEndpoint(endpoint.domain) : undefined}
-                  onTestSingle={() => onTestSingle(endpoint)}
-                  onDelete={onEndpointsChange ? () => removeEndpointByDomain(endpoint.domain) : undefined}
-                  bindingCount={bindingCount}
-                />
-              )
-            })
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={enabledEndpoints.map(e => e.domain)} strategy={verticalListSortingStrategy}>
+                {enabledEndpoints.map((endpoint, index) => {
+                  const result = results.find(r => r.endpoint.domain === endpoint.domain)
+                  const isTesting = testingDomains.has(endpoint.domain)
+                  return (
+                    <SortableResultRow
+                      key={endpoint.domain}
+                      id={endpoint.domain}
+                      rank={index + 1}
+                      endpoint={endpoint}
+                      result={result}
+                      isTesting={isTesting}
+                      onApply={result ? () => onApply(result) : undefined}
+                      onUnbind={boundDomains.has(endpoint.domain) ? () => onUnbindEndpoint(endpoint.domain) : undefined}
+                      onTestSingle={() => onTestSingle(endpoint)}
+                      onDelete={onEndpointsChange ? () => removeEndpointByDomain(endpoint.domain) : undefined}
+                      bindingCount={bindingCount}
+                    />
+                  )
+                })}
+              </SortableContext>
+            </DndContext>
           )}
         </div>
         </div>
@@ -669,17 +699,8 @@ function LatencyComparison({ result, isTesting }: { result: EndpointResult; isTe
   )
 }
 
-function ResultRow({
-  rank,
-  endpoint,
-  result,
-  isTesting,
-  onApply,
-  onUnbind,
-  onTestSingle,
-  onDelete,
-  bindingCount: _bindingCount,
-}: {
+function SortableResultRow(props: {
+  id: string
   rank: number
   endpoint: Endpoint
   result?: EndpointResult
@@ -690,14 +711,57 @@ function ResultRow({
   onDelete?: () => void
   bindingCount?: number
 }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+    zIndex: isDragging ? 1 : undefined,
+    position: isDragging ? 'relative' as const : undefined,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <ResultRow {...props} dragListeners={listeners} />
+    </div>
+  )
+}
+
+function ResultRow({
+  rank,
+  endpoint,
+  result,
+  isTesting,
+  onApply,
+  onUnbind,
+  onTestSingle,
+  onDelete,
+  bindingCount: _bindingCount,
+  dragListeners,
+}: {
+  id?: string
+  rank: number
+  endpoint: Endpoint
+  result?: EndpointResult
+  isTesting?: boolean
+  onApply?: () => void
+  onUnbind?: () => void
+  onTestSingle?: () => void
+  onDelete?: () => void
+  bindingCount?: number
+  dragListeners?: Record<string, unknown>
+}) {
   const displayIp = result?.ip || '-'
 
   // 未测试状态
   if (!result) {
     return (
       <div
-        className="grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_minmax(140px,180px)_90px_120px] lg:grid-cols-[40px_1fr_1fr_minmax(180px,220px)_120px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 bg-apple-gray-50/50"
+        className="grid grid-cols-[20px_32px_minmax(60px,1fr)_minmax(80px,1fr)_minmax(140px,180px)_90px_120px] lg:grid-cols-[24px_40px_1fr_1fr_minmax(180px,220px)_120px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 bg-apple-gray-50/50"
       >
+        <span {...dragListeners} className="cursor-grab active:cursor-grabbing flex items-center justify-center text-apple-gray-300 hover:text-apple-gray-500">
+          <GripVertical className="w-3.5 h-3.5" />
+        </span>
         <span className="text-xs lg:text-sm text-apple-gray-300">{rank}</span>
         <span className="text-xs lg:text-sm font-medium text-apple-gray-400 truncate">
           {endpoint.name}
@@ -744,8 +808,11 @@ function ResultRow({
 
   return (
     <div
-      className={`grid grid-cols-[32px_minmax(60px,1fr)_minmax(80px,1fr)_minmax(140px,180px)_90px_120px] lg:grid-cols-[40px_1fr_1fr_minmax(180px,220px)_120px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors ${isTesting ? 'bg-apple-blue/5' : ''}`}
+      className={`grid grid-cols-[20px_32px_minmax(60px,1fr)_minmax(80px,1fr)_minmax(140px,180px)_90px_120px] lg:grid-cols-[24px_40px_1fr_1fr_minmax(180px,220px)_120px_150px] gap-1 lg:gap-2 px-3 lg:px-4 py-2.5 lg:py-3 items-center border-b border-apple-gray-100 last:border-0 hover:bg-apple-gray-50 transition-colors ${isTesting ? 'bg-apple-blue/5' : ''}`}
     >
+      <span {...dragListeners} className="cursor-grab active:cursor-grabbing flex items-center justify-center text-apple-gray-300 hover:text-apple-gray-500">
+        <GripVertical className="w-3.5 h-3.5" />
+      </span>
       <span className="text-xs lg:text-sm text-apple-gray-400">{rank}</span>
       <span className="text-xs lg:text-sm font-medium text-apple-gray-600 truncate">
         {endpoint.name}

@@ -429,6 +429,12 @@ function App() {
 
   // ===== 单端点绑定 =====
   const applyEndpoint = async (result: EndpointResult) => {
+    const permissionOk = await checkPermission()
+    if (!permissionOk) {
+      if (!userDeclinedAdmin) setShowAdminDialog(true)
+      return
+    }
+
     try {
       await invoke('apply_endpoint', {
         domain: result.endpoint.domain,
@@ -451,6 +457,12 @@ function App() {
 
   // ===== 单端点解绑 =====
   const unbindEndpoint = async (domain: string) => {
+    const permissionOk = await checkPermission()
+    if (!permissionOk) {
+      if (!userDeclinedAdmin) setShowAdminDialog(true)
+      return
+    }
+
     try {
       await invoke('unbind_endpoint', { domain })
       await refreshBindingCount()
