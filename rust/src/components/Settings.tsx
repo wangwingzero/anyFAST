@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { RotateCcw, Power, FileText, ExternalLink, RefreshCw, Download, Info, PlayCircle, Loader2, CheckCircle2, Github, Star, AlertCircle, Repeat, Search, XCircle, Globe } from 'lucide-react'
-import { Endpoint, AppConfig, UpdateInfo, DiagnosticStep } from '../types'
+import { Endpoint, AppConfig, UpdateInfo, DiagnosticStep, ProxyEnvSnapshot } from '../types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 import { check, type Update } from '@tauri-apps/plugin-updater'
@@ -13,12 +13,16 @@ const DEFAULT_ENDPOINTS: Endpoint[] = [
     url: 'https://cf.betterclau.de/claude/anyrouter.top',
     domain: 'cf.betterclau.de',
     enabled: true,
+    network_mode: 'auto',
+    network_proxy: '',
   },
   {
     name: 'WONG公益站',
     url: 'https://wzw.pp.ua',
     domain: 'wzw.pp.ua',
     enabled: true,
+    network_mode: 'auto',
+    network_proxy: '',
   },
 ]
 
@@ -76,8 +80,41 @@ export function Settings({
   const [customProxy, setCustomProxy] = useState('')
   const [proxyLoading, setProxyLoading] = useState(false)
   const [detectedProxy, setDetectedProxy] = useState<string | null>(null)
+  const [proxyEnvSnapshot, setProxyEnvSnapshot] = useState<ProxyEnvSnapshot | null>(null)
+  const [proxyEnvLoading, setProxyEnvLoading] = useState(false)
 
   const initializedRef = useRef(false)
+
+  const refreshProxySnapshot = async () => {
+    setProxyEnvLoading(true)
+    try {
+      const snapshot = await invoke<ProxyEnvSnapshot>('get_proxy_env_snapshot')
+      if (snapshot) {
+        setProxyEnvSnapshot(snapshot)
+        setDetectedProxy(snapshot.detectedSystemProxy ?? null)
+      }
+    } catch (e) {
+      console.error('Failed to get proxy env snapshot:', e)
+    } finally {
+      setProxyEnvLoading(false)
+    }
+  }
+
+  const clearCurrentProcessProxyEnv = async () => {
+    setProxyEnvLoading(true)
+    try {
+      const snapshot = await invoke<ProxyEnvSnapshot>('clear_process_proxy_env')
+      if (snapshot) {
+        setProxyEnvSnapshot(snapshot)
+        setDetectedProxy(snapshot.detectedSystemProxy ?? null)
+      }
+      addLog('已清理 anyFAST 当前进程中的 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY')
+    } catch (e) {
+      addLog(`清理当前进程代理环境失败: ${String(e)}`)
+    } finally {
+      setProxyEnvLoading(false)
+    }
+  }
 
   // 初始化
   useEffect(() => {
@@ -93,6 +130,7 @@ export function Settings({
       }
       // 自动检测系统代理（仅展示）
       invoke<string | null>('detect_system_proxy').then(setDetectedProxy).catch(() => {})
+      refreshProxySnapshot().catch(() => {})
     }
   }, [config])
 
@@ -165,6 +203,7 @@ export function Settings({
       await invoke('save_config', { config: newConfig })
       onConfigChange(newConfig)
       setUpdateProxy(value)
+      await refreshProxySnapshot()
     } catch (e) {
       console.error('Failed to save proxy setting:', e)
     } finally {
@@ -481,6 +520,57 @@ export function Settings({
                 <ExternalLink className="w-4 h-4" />
                 打开
               </button>
+            </div>
+          </div>
+        </Section>
+
+        <Section icon={<Globe className="w-5 h-5" />} title="网络修复">
+          <div className="space-y-3">
+            <div className="p-3 bg-apple-gray-50 rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm text-apple-gray-600">当前进程代理环境</span>
+                  <p className="text-xs text-apple-gray-400 mt-0.5">
+                    用于排查 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 冲突
+                  </p>
+                </div>
+                {proxyEnvLoading && <Loader2 className="w-4 h-4 animate-spin text-apple-gray-400" />}
+              </div>
+
+              <div className="space-y-1.5">
+                <ProxyValueRow label="HTTP_PROXY" value={proxyEnvSnapshot?.httpProxy} />
+                <ProxyValueRow label="HTTPS_PROXY" value={proxyEnvSnapshot?.httpsProxy} />
+                <ProxyValueRow label="ALL_PROXY" value={proxyEnvSnapshot?.allProxy} />
+                <ProxyValueRow label="NO_PROXY" value={proxyEnvSnapshot?.noProxy} />
+                <ProxyValueRow label="检测到的系统代理" value={proxyEnvSnapshot?.detectedSystemProxy} />
+                <ProxyValueRow
+                  label="本地 xray 10808"
+                  value={proxyEnvSnapshot?.localXrayAvailable ? (proxyEnvSnapshot?.localXrayProxy || '已监听') : '未发现监听'}
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={refreshProxySnapshot}
+                  disabled={proxyEnvLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-gray-200 text-apple-gray-600 text-sm font-medium rounded-xl hover:bg-apple-gray-300 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${proxyEnvLoading ? 'animate-spin' : ''}`} />
+                  刷新诊断
+                </button>
+                <button
+                  onClick={clearCurrentProcessProxyEnv}
+                  disabled={proxyEnvLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-apple-orange/10 text-apple-orange text-sm font-medium rounded-xl hover:bg-apple-orange/20 transition-colors disabled:opacity-50"
+                >
+                  <XCircle className="w-4 h-4" />
+                  清理当前进程代理
+                </button>
+              </div>
+
+              <p className="text-xs text-apple-gray-400">
+                这里只清理 anyFAST 当前进程和它创建的子进程，不会直接删除系统级环境变量；适合快速验证“代理环境冲突是不是根因”。
+              </p>
             </div>
           </div>
         </Section>
@@ -902,6 +992,17 @@ function Section({
         <h2 className="text-sm font-semibold text-apple-gray-600">{title}</h2>
       </div>
       {children}
+    </div>
+  )
+}
+
+function ProxyValueRow({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div className="flex items-start gap-3 text-xs">
+      <span className="w-28 flex-shrink-0 text-apple-gray-400 font-mono">{label}</span>
+      <span className="min-w-0 break-all text-apple-gray-600 font-mono">
+        {value && value.trim() ? value : '未设置'}
+      </span>
     </div>
   )
 }

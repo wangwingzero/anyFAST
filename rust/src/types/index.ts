@@ -3,6 +3,8 @@ export interface Endpoint {
   url: string
   domain: string
   enabled: boolean
+  network_mode?: string
+  network_proxy?: string
 }
 
 export interface EndpointResult {
@@ -17,6 +19,9 @@ export interface EndpointResult {
   original_latency: number
   speedup_percent: number
   use_original: boolean
+  route_mode?: string
+  route_detail?: string
+  bind_capable?: boolean
 }
 
 export interface AppConfig {
@@ -85,6 +90,34 @@ export interface UpdateInfo {
   releaseUrl: string
   releaseNotes: string
   publishedAt: string
+}
+
+export interface RouteAttempt {
+  mode: string
+  success: boolean
+  statusCode?: number
+  latencyMs?: number
+  detail: string
+  proxyUrl?: string
+}
+
+export interface EndpointNetworkDiagnosis {
+  domain: string
+  url: string
+  recommendedMode: string
+  recommendedProxy: string
+  summary: string
+  attempts: RouteAttempt[]
+}
+
+export interface ProxyEnvSnapshot {
+  httpProxy?: string
+  httpsProxy?: string
+  allProxy?: string
+  noProxy?: string
+  detectedSystemProxy?: string
+  localXrayProxy?: string
+  localXrayAvailable: boolean
 }
 
 // ===== 持续优化事件 =====

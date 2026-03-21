@@ -1,12 +1,40 @@
 import { useState } from 'react'
-import { CheckCircle2, Zap, Globe, Link2, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download, CloudDownload, GripVertical } from 'lucide-react'
+import { CheckCircle2, Zap, Globe, Link2, Plus, X, Loader2, Copy, Check, RefreshCw, Trash2, Link, Unlink, ListFilter, AlertTriangle, ExternalLink, Download, CloudDownload, GripVertical, Search } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Endpoint, EndpointResult, AppConfig } from '../types'
+import { Endpoint, EndpointNetworkDiagnosis, EndpointResult, AppConfig } from '../types'
 import { ImportEndpointsDialog } from './ImportEndpointsDialog'
+
+const NETWORK_MODE_META: Record<string, { label: string; className: string }> = {
+  auto: {
+    label: '自动选路',
+    className: 'bg-apple-gray-100 text-apple-gray-500',
+  },
+  direct: {
+    label: '直连',
+    className: 'bg-apple-green/10 text-apple-green',
+  },
+  system_proxy: {
+    label: '系统代理',
+    className: 'bg-apple-blue/10 text-apple-blue',
+  },
+  local_xray: {
+    label: '本地 xray',
+    className: 'bg-apple-orange/10 text-apple-orange',
+  },
+  manual_proxy: {
+    label: '手动代理',
+    className: 'bg-purple-100 text-purple-700',
+  },
+}
+
+const normalizeNetworkMode = (mode?: string) => {
+  if (!mode) return 'auto'
+  return NETWORK_MODE_META[mode] ? mode : 'auto'
+}
 
 // 可复制文本组件
 function CopyableText({ text, className }: { text: string; className?: string }) {
@@ -87,6 +115,8 @@ export function Dashboard({
   const [fetchIpsError, setFetchIpsError] = useState<string | null>(null)
   const [showNoIpsWarning, setShowNoIpsWarning] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
+  const [routingInProgress, setRoutingInProgress] = useState(false)
+  const [routingSummary, setRoutingSummary] = useState<string | null>(null)
 
   const testedCount = results.length
   const availableCount = results.filter((r) => r.success && !r.use_original).length
@@ -118,7 +148,14 @@ export function Dashboard({
     if (!newUrl.trim() || !onEndpointsChange) return
     const domain = newUrl.replace(/^https?:\/\//, '').split('/')[0]
     const name = newName.trim() || domain
-    const newEndpoint: Endpoint = { name, url: newUrl, domain, enabled: true }
+    const newEndpoint: Endpoint = {
+      name,
+      url: newUrl,
+      domain,
+      enabled: true,
+      network_mode: 'auto',
+      network_proxy: '',
+    }
     const newEndpoints = [...endpoints, newEndpoint]
     onEndpointsChange(newEndpoints)
     onSaveConfig?.(newEndpoints)
@@ -221,6 +258,55 @@ export function Dashboard({
     setShowImportDialog(false)
   }
 
+  const autoRouteEndpoints = async () => {
+    if (!onEndpointsChange || endpoints.length === 0) return
+    setRoutingInProgress(true)
+    setRoutingSummary('正在诊断各端点的最佳链路...')
+    try {
+      const diagnoses = await invoke<EndpointNetworkDiagnosis[]>('auto_route_endpoints', { endpoints })
+      const diagnosisMap = new Map(diagnoses.map((item) => [item.domain, item]))
+      let changed = 0
+
+      const updatedEndpoints = endpoints.map((endpoint) => {
+        const diagnosis = diagnosisMap.get(endpoint.domain)
+        if (!diagnosis) return endpoint
+
+        const nextMode = diagnosis.recommendedMode || normalizeNetworkMode(endpoint.network_mode)
+        const nextProxy = nextMode === 'manual_proxy'
+          ? (diagnosis.recommendedProxy || endpoint.network_proxy || '')
+          : (endpoint.network_proxy || '')
+
+        const normalizedCurrentMode = normalizeNetworkMode(endpoint.network_mode)
+        const currentProxy = endpoint.network_proxy || ''
+        if (normalizedCurrentMode !== nextMode || currentProxy !== nextProxy) {
+          changed += 1
+        }
+
+        return {
+          ...endpoint,
+          network_mode: nextMode,
+          network_proxy: nextProxy,
+        }
+      })
+
+      onEndpointsChange(updatedEndpoints)
+      onSaveConfig?.(updatedEndpoints)
+      if (config) {
+        onConfigChange?.({ ...config, endpoints: updatedEndpoints })
+      }
+
+      setRoutingSummary(
+        changed > 0
+          ? `自动选路完成：已更新 ${changed} 个端点的链路策略`
+          : '自动选路完成：当前端点已处于推荐链路',
+      )
+    } catch (error) {
+      setRoutingSummary(`自动选路失败：${String(error)}`)
+    } finally {
+      setRoutingInProgress(false)
+    }
+  }
+
   return (
     <div className="h-full flex flex-col p-4 lg:p-6 overflow-y-auto">
       {/* Header */}
@@ -255,9 +341,17 @@ export function Dashboard({
           >
             <ListFilter className="w-4 h-4" />
             优选 IP
-            {hasPreferredIps && (
-              <span className="text-xs opacity-70">({config?.preferred_ips.length})</span>
-            )}
+              {hasPreferredIps && (
+                <span className="text-xs opacity-70">({config?.preferred_ips.length})</span>
+              )}
+            </button>
+          <button
+            onClick={autoRouteEndpoints}
+            disabled={endpoints.length === 0 || routingInProgress}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl bg-apple-gray-100 text-apple-gray-600 hover:bg-apple-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Search className={`w-4 h-4 ${routingInProgress ? 'animate-spin' : ''}`} />
+            {routingInProgress ? '选路中...' : '自动选路'}
           </button>
           {/* 全局测速 */}
           <button
@@ -290,6 +384,12 @@ export function Dashboard({
           )}
         </div>
       </div>
+
+      {routingSummary && (
+        <div className="mb-4 px-3 py-2 text-xs rounded-xl bg-apple-gray-50 border border-apple-gray-200 text-apple-gray-500">
+          {routingSummary}
+        </div>
+      )}
 
       {/* Results Table */}
       <div className="flex-[3] bg-white/70 backdrop-blur-sm rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[300px] mb-3">
@@ -427,6 +527,7 @@ export function Dashboard({
                 <span className={`inline-block w-2 h-2 rounded-full ${endpoint.enabled ? 'bg-apple-green' : 'bg-apple-gray-300'}`} />
               </button>
               <span className="font-medium">{endpoint.name}</span>
+              <NetworkModeBadge mode={endpoint.network_mode} />
               <span className="text-apple-gray-400 font-mono">{endpoint.url}</span>
               <button
                 onClick={() => removeEndpoint(index)}
@@ -603,6 +704,19 @@ function CompactStatus({
   )
 }
 
+function NetworkModeBadge({ mode, title }: { mode?: string; title?: string }) {
+  const normalized = normalizeNetworkMode(mode)
+  const meta = NETWORK_MODE_META[normalized]
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center px-1.5 py-0 rounded-md text-[10px] font-medium ${meta.className}`}
+    >
+      {meta.label}
+    </span>
+  )
+}
+
 // 延迟对比组件：展示原始延迟 → 优化延迟 [加速百分比]
 function LatencyComparison({ result, isTesting }: { result: EndpointResult; isTesting?: boolean }) {
   if (isTesting) {
@@ -763,9 +877,12 @@ function ResultRow({
           <GripVertical className="w-3.5 h-3.5" />
         </span>
         <span className="text-xs lg:text-sm text-apple-gray-300">{rank}</span>
-        <span className="text-xs lg:text-sm font-medium text-apple-gray-400 truncate">
-          {endpoint.name}
-        </span>
+        <div className="text-xs lg:text-sm font-medium text-apple-gray-400 min-w-0">
+          <div className="min-w-0 flex flex-col gap-1">
+            <span className="truncate">{endpoint.name}</span>
+            <NetworkModeBadge mode={endpoint.network_mode} />
+          </div>
+        </div>
         <CopyableText
           text={endpoint.url}
           className="text-xs lg:text-sm text-apple-gray-300 font-mono"
@@ -814,9 +931,15 @@ function ResultRow({
         <GripVertical className="w-3.5 h-3.5" />
       </span>
       <span className="text-xs lg:text-sm text-apple-gray-400">{rank}</span>
-      <span className="text-xs lg:text-sm font-medium text-apple-gray-600 truncate">
-        {endpoint.name}
-      </span>
+        <div className="text-xs lg:text-sm font-medium text-apple-gray-600 min-w-0">
+          <div className="min-w-0 flex flex-col gap-1">
+            <span className="truncate">{endpoint.name}</span>
+            <NetworkModeBadge
+              mode={result.route_mode || endpoint.network_mode}
+              title={result.route_detail}
+            />
+          </div>
+        </div>
       <CopyableText
         text={endpoint.url}
         className="text-xs lg:text-sm text-apple-gray-400 font-mono"
@@ -840,7 +963,7 @@ function ResultRow({
             )}
           </button>
         )}
-        {result?.success && onApply && !isTesting && !result.use_original && (
+        {result?.success && onApply && !isTesting && !result.use_original && (result.bind_capable ?? true) && (
           <button
             onClick={onApply}
             className="px-1.5 lg:px-2 py-1 text-xs font-medium rounded-lg btn-press transition-colors bg-apple-green/10 text-apple-green hover:bg-apple-green/20"

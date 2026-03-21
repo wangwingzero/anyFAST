@@ -22,13 +22,13 @@ use health_checker::{BaselineTracker, HealthChecker};
 use history::HistoryManager;
 use hosts_manager::HostsBinding;
 use models::{
-    AppConfig, DiagnosticStep, Endpoint, EndpointResult, HistoryRecord, HistoryStats,
-    PermissionStatus, UpdateInfo,
+    AppConfig, DiagnosticStep, Endpoint, EndpointNetworkDiagnosis, EndpointResult, HistoryRecord,
+    HistoryStats, PermissionStatus, ProxyEnvSnapshot, RouteAttempt, UpdateInfo,
 };
 use std::collections::{HashMap, HashSet};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(feature = "tauri-runtime")]
 use tauri::{
     menu::{Menu, MenuItem},
@@ -119,6 +119,417 @@ fn normalize_preferred_ips(raw_ips: Vec<String>) -> Vec<String> {
     normalized
 }
 
+const LOCAL_XRAY_PROXY_URL: &str = "http://127.0.0.1:10808";
+const NETWORK_MODE_AUTO: &str = "auto";
+const NETWORK_MODE_DIRECT: &str = "direct";
+const NETWORK_MODE_SYSTEM_PROXY: &str = "system_proxy";
+const NETWORK_MODE_LOCAL_XRAY: &str = "local_xray";
+const NETWORK_MODE_MANUAL_PROXY: &str = "manual_proxy";
+const PROCESS_PROXY_ENV_KEYS: [&str; 8] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
+
+#[derive(Debug, Clone)]
+struct ResolvedNetworkRoute {
+    mode: String,
+    proxy_url: Option<String>,
+    detail: String,
+    selected_by_auto: bool,
+}
+
+fn normalize_endpoint_network_mode(value: &str) -> String {
+    match value.trim() {
+        NETWORK_MODE_DIRECT => NETWORK_MODE_DIRECT.to_string(),
+        NETWORK_MODE_SYSTEM_PROXY => NETWORK_MODE_SYSTEM_PROXY.to_string(),
+        NETWORK_MODE_LOCAL_XRAY => NETWORK_MODE_LOCAL_XRAY.to_string(),
+        NETWORK_MODE_MANUAL_PROXY => NETWORK_MODE_MANUAL_PROXY.to_string(),
+        _ => NETWORK_MODE_AUTO.to_string(),
+    }
+}
+
+fn normalize_endpoint(endpoint: &mut Endpoint) {
+    endpoint.network_mode = normalize_endpoint_network_mode(&endpoint.network_mode);
+    endpoint.network_proxy = endpoint.network_proxy.trim().to_string();
+}
+
+fn normalize_endpoints(endpoints: &mut [Endpoint]) {
+    for endpoint in endpoints.iter_mut() {
+        normalize_endpoint(endpoint);
+    }
+}
+
+fn route_display_label(mode: &str) -> String {
+    match mode {
+        NETWORK_MODE_SYSTEM_PROXY => "system-proxy".to_string(),
+        NETWORK_MODE_LOCAL_XRAY => "local-xray".to_string(),
+        NETWORK_MODE_MANUAL_PROXY => "manual-proxy".to_string(),
+        _ => "direct".to_string(),
+    }
+}
+
+fn read_env_proxy(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn detect_env_proxy() -> Option<String> {
+    read_env_proxy("HTTPS_PROXY")
+        .or_else(|| read_env_proxy("https_proxy"))
+        .or_else(|| read_env_proxy("HTTP_PROXY"))
+        .or_else(|| read_env_proxy("http_proxy"))
+}
+
+#[cfg(target_os = "windows")]
+fn detect_windows_registry_proxy() -> Option<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let key = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+        .ok()?;
+    let enabled: u32 = key.get_value("ProxyEnable").unwrap_or(0);
+    if enabled != 1 {
+        return None;
+    }
+    let server = key.get_value::<String, _>("ProxyServer").ok()?;
+    if server.is_empty() {
+        return None;
+    }
+    if server.contains('=') {
+        for part in server.split(';') {
+            let part = part.trim();
+            if part.starts_with("http=") {
+                let addr = part.trim_start_matches("http=");
+                if !addr.is_empty() {
+                    return Some(format!("http://{}", addr));
+                }
+            }
+        }
+        None
+    } else {
+        Some(format!("http://{}", server))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn detect_windows_registry_proxy() -> Option<String> {
+    None
+}
+
+fn detect_system_proxy_inner() -> Option<String> {
+    detect_env_proxy().or_else(detect_windows_registry_proxy)
+}
+
+fn normalize_proxy_url(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn is_local_proxy_available() -> bool {
+    let addr: SocketAddr = match "127.0.0.1:10808".parse() {
+        Ok(addr) => addr,
+        Err(_) => return false,
+    };
+    TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+fn build_proxy_env_snapshot() -> ProxyEnvSnapshot {
+    ProxyEnvSnapshot {
+        http_proxy: read_env_proxy("HTTP_PROXY").or_else(|| read_env_proxy("http_proxy")),
+        https_proxy: read_env_proxy("HTTPS_PROXY").or_else(|| read_env_proxy("https_proxy")),
+        all_proxy: read_env_proxy("ALL_PROXY").or_else(|| read_env_proxy("all_proxy")),
+        no_proxy: read_env_proxy("NO_PROXY").or_else(|| read_env_proxy("no_proxy")),
+        detected_system_proxy: detect_system_proxy_inner(),
+        local_xray_proxy: Some(LOCAL_XRAY_PROXY_URL.to_string()),
+        local_xray_available: is_local_proxy_available(),
+    }
+}
+
+fn route_attempt_sort_key(attempt: &RouteAttempt) -> f64 {
+    attempt.latency_ms.unwrap_or(999999.0)
+}
+
+fn should_treat_status_as_success(status: u16) -> bool {
+    status < 500
+}
+
+async fn probe_endpoint_via_mode(
+    endpoint: &Endpoint,
+    mode: &str,
+    proxy_url: Option<String>,
+) -> RouteAttempt {
+    let mut builder = reqwest::Client::builder()
+        .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
+        .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .no_proxy();
+
+    if let Some(proxy_value) = proxy_url.as_ref() {
+        match reqwest::Proxy::all(proxy_value) {
+            Ok(proxy) => {
+                builder = builder.proxy(proxy);
+            }
+            Err(error) => {
+                return RouteAttempt {
+                    mode: mode.to_string(),
+                    success: false,
+                    status_code: None,
+                    latency_ms: None,
+                    detail: format!("代理地址无效: {}", error),
+                    proxy_url,
+                };
+            }
+        }
+    }
+
+    let client = match builder.build() {
+        Ok(client) => client,
+        Err(error) => {
+            return RouteAttempt {
+                mode: mode.to_string(),
+                success: false,
+                status_code: None,
+                latency_ms: None,
+                detail: format!("创建客户端失败: {}", error),
+                proxy_url,
+            };
+        }
+    };
+
+    let start = Instant::now();
+    match client.get(&endpoint.url).send().await {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+            RouteAttempt {
+                mode: mode.to_string(),
+                success: should_treat_status_as_success(status),
+                status_code: Some(status),
+                latency_ms: Some(latency_ms),
+                detail: format!("HTTP {}", status),
+                proxy_url,
+            }
+        }
+        Err(error) => RouteAttempt {
+            mode: mode.to_string(),
+            success: false,
+            status_code: None,
+            latency_ms: None,
+            detail: error.to_string(),
+            proxy_url,
+        },
+    }
+}
+
+fn build_route_summary(attempt: &RouteAttempt) -> String {
+    let mode_label = route_display_label(&attempt.mode);
+    match (attempt.success, attempt.status_code, attempt.latency_ms) {
+        (true, Some(status), Some(latency)) => {
+            format!("{} 成功，HTTP {}，{:.0}ms", mode_label, status, latency)
+        }
+        (false, Some(status), _) => {
+            format!("{} 不推荐，HTTP {}", mode_label, status)
+        }
+        (false, None, _) => {
+            format!("{} 失败: {}", mode_label, attempt.detail)
+        }
+        _ => format!("{} 已检测", mode_label),
+    }
+}
+
+fn pick_recommended_attempt(attempts: &[RouteAttempt]) -> Option<&RouteAttempt> {
+    attempts
+        .iter()
+        .find(|attempt| attempt.mode == NETWORK_MODE_DIRECT && attempt.success)
+        .or_else(|| {
+            attempts
+                .iter()
+                .filter(|attempt| attempt.success)
+                .min_by(|left, right| {
+                    route_attempt_sort_key(left)
+                        .partial_cmp(&route_attempt_sort_key(right))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        })
+}
+
+async fn diagnose_endpoint_network_internal(endpoint: &Endpoint) -> EndpointNetworkDiagnosis {
+    let mut attempts = Vec::new();
+    attempts.push(probe_endpoint_via_mode(endpoint, NETWORK_MODE_DIRECT, None).await);
+
+    let system_proxy = detect_system_proxy_inner();
+    if let Some(proxy_url) = system_proxy.clone() {
+        attempts.push(
+            probe_endpoint_via_mode(endpoint, NETWORK_MODE_SYSTEM_PROXY, Some(proxy_url)).await,
+        );
+    }
+
+    if is_local_proxy_available() {
+        attempts.push(
+            probe_endpoint_via_mode(
+                endpoint,
+                NETWORK_MODE_LOCAL_XRAY,
+                Some(LOCAL_XRAY_PROXY_URL.to_string()),
+            )
+            .await,
+        );
+    }
+
+    if let Some(proxy_url) = normalize_proxy_url(&endpoint.network_proxy) {
+        let duplicated = attempts.iter().any(|attempt| {
+            attempt.proxy_url.as_deref() == Some(proxy_url.as_str())
+                && attempt.mode == NETWORK_MODE_MANUAL_PROXY
+        });
+        if !duplicated {
+            attempts.push(
+                probe_endpoint_via_mode(endpoint, NETWORK_MODE_MANUAL_PROXY, Some(proxy_url)).await,
+            );
+        }
+    }
+
+    let current_mode = normalize_endpoint_network_mode(&endpoint.network_mode);
+    if let Some(best_attempt) = pick_recommended_attempt(&attempts) {
+        EndpointNetworkDiagnosis {
+            domain: endpoint.domain.clone(),
+            url: endpoint.url.clone(),
+            recommended_mode: best_attempt.mode.clone(),
+            recommended_proxy: best_attempt.proxy_url.clone().unwrap_or_default(),
+            summary: build_route_summary(best_attempt),
+            attempts,
+        }
+    } else {
+        EndpointNetworkDiagnosis {
+            domain: endpoint.domain.clone(),
+            url: endpoint.url.clone(),
+            recommended_mode: current_mode,
+            recommended_proxy: endpoint.network_proxy.clone(),
+            summary: "所有候选链路均失败，保留当前策略".to_string(),
+            attempts,
+        }
+    }
+}
+
+async fn resolve_runtime_route(endpoint: &Endpoint) -> ResolvedNetworkRoute {
+    let mode = normalize_endpoint_network_mode(&endpoint.network_mode);
+    match mode.as_str() {
+        NETWORK_MODE_DIRECT => ResolvedNetworkRoute {
+            mode,
+            proxy_url: None,
+            detail: "显式直连".to_string(),
+            selected_by_auto: false,
+        },
+        NETWORK_MODE_SYSTEM_PROXY => ResolvedNetworkRoute {
+            mode,
+            proxy_url: detect_system_proxy_inner(),
+            detail: "显式系统代理".to_string(),
+            selected_by_auto: false,
+        },
+        NETWORK_MODE_LOCAL_XRAY => ResolvedNetworkRoute {
+            mode,
+            proxy_url: Some(LOCAL_XRAY_PROXY_URL.to_string()),
+            detail: "显式本地 xray".to_string(),
+            selected_by_auto: false,
+        },
+        NETWORK_MODE_MANUAL_PROXY => ResolvedNetworkRoute {
+            mode,
+            proxy_url: normalize_proxy_url(&endpoint.network_proxy),
+            detail: "显式手动代理".to_string(),
+            selected_by_auto: false,
+        },
+        _ => {
+            let diagnosis = diagnose_endpoint_network_internal(endpoint).await;
+            ResolvedNetworkRoute {
+                mode: diagnosis.recommended_mode.clone(),
+                proxy_url: normalize_proxy_url(&diagnosis.recommended_proxy),
+                detail: diagnosis.summary,
+                selected_by_auto: true,
+            }
+        }
+    }
+}
+
+fn decorate_direct_result(result: &mut EndpointResult, route: &ResolvedNetworkRoute) {
+    result.route_mode = route.mode.clone();
+    result.route_detail = if route.selected_by_auto {
+        format!("自动选择: {}", route.detail)
+    } else {
+        route.detail.clone()
+    };
+    result.bind_capable = true;
+}
+
+async fn test_endpoint_via_route(
+    endpoint: &Endpoint,
+    route: &ResolvedNetworkRoute,
+) -> EndpointResult {
+    if route.mode != NETWORK_MODE_DIRECT && route.proxy_url.is_none() {
+        let reason = match route.mode.as_str() {
+            NETWORK_MODE_SYSTEM_PROXY => "未检测到系统代理",
+            NETWORK_MODE_MANUAL_PROXY => "未配置手动代理地址",
+            NETWORK_MODE_LOCAL_XRAY => "本地 xray 代理不可用",
+            _ => "未获取到代理地址",
+        };
+        let mut result = EndpointResult::failure(
+            endpoint.clone(),
+            route_display_label(&route.mode),
+            reason.to_string(),
+        );
+        result.route_mode = route.mode.clone();
+        result.route_detail = route.detail.clone();
+        result.bind_capable = false;
+        return result;
+    }
+
+    let attempt = probe_endpoint_via_mode(endpoint, &route.mode, route.proxy_url.clone()).await;
+    if attempt.success {
+        let mut result = EndpointResult::success(
+            endpoint.clone(),
+            route_display_label(&route.mode),
+            attempt.latency_ms.unwrap_or(0.0),
+        );
+        result.original_ip = String::new();
+        result.original_latency = 0.0;
+        result.speedup_percent = 0.0;
+        result.use_original = true;
+        result.route_mode = route.mode.clone();
+        result.route_detail = if route.selected_by_auto {
+            format!("自动选择: {}", route.detail)
+        } else {
+            route.detail.clone()
+        };
+        result.bind_capable = false;
+        result.warning = Some("当前端点通过代理链路验证，hosts 绑定不适用".to_string());
+        return result;
+    }
+
+    let mut result = EndpointResult::failure(
+        endpoint.clone(),
+        route_display_label(&route.mode),
+        attempt.detail.clone(),
+    );
+    result.route_mode = route.mode.clone();
+    result.route_detail = if route.selected_by_auto {
+        format!("自动选择失败: {}", route.detail)
+    } else {
+        route.detail.clone()
+    };
+    result.bind_capable = false;
+    result
+}
+
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
@@ -130,6 +541,7 @@ async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
 async fn save_config(state: State<'_, AppState>, config: AppConfig) -> Result<(), String> {
     let mut config = config;
     config.preferred_ips = normalize_preferred_ips(config.preferred_ips);
+    normalize_endpoints(&mut config.endpoints);
     state
         .config_manager
         .save(&config)
@@ -186,7 +598,55 @@ async fn start_speed_test(
 
     // 使用动态全局超时，避免大量端点时后排任务被过早判失败
     let workflow_timeout = estimate_test_timeout(endpoints.len());
-    let test_future = tester.test_all(&endpoints);
+    let test_future = async {
+        let mut direct_routes: HashMap<String, ResolvedNetworkRoute> = HashMap::new();
+        let mut direct_endpoints = Vec::new();
+        let mut routed_endpoints = Vec::new();
+
+        for endpoint in &endpoints {
+            let route = resolve_runtime_route(endpoint).await;
+            if route.mode == NETWORK_MODE_DIRECT {
+                direct_routes.insert(endpoint.domain.clone(), route);
+                direct_endpoints.push(endpoint.clone());
+            } else {
+                routed_endpoints.push((endpoint.clone(), route));
+            }
+        }
+
+        let mut combined_results = if direct_endpoints.is_empty() {
+            Vec::new()
+        } else {
+            let mut direct_results = tester.test_all(&direct_endpoints).await;
+            for result in direct_results.iter_mut() {
+                if let Some(route) = direct_routes.get(&result.endpoint.domain) {
+                    decorate_direct_result(result, route);
+                }
+            }
+            direct_results
+        };
+
+        if !routed_endpoints.is_empty() {
+            let mut join_set = tokio::task::JoinSet::new();
+            for (endpoint, route) in routed_endpoints {
+                join_set.spawn(async move { test_endpoint_via_route(&endpoint, &route).await });
+            }
+            while let Some(joined) = join_set.join_next().await {
+                if let Ok(result) = joined {
+                    combined_results.push(result);
+                }
+            }
+        }
+
+        combined_results.sort_by(|a, b| match (a.success, b.success) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a
+                .latency
+                .partial_cmp(&b.latency)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        });
+        combined_results
+    };
     let results = match tokio::time::timeout(workflow_timeout, test_future).await {
         Ok(results) => results,
         Err(_) => {
@@ -214,7 +674,13 @@ async fn start_speed_test(
         let best_by_domain = collect_best_success_by_domain(&results);
         let mut b = baselines.lock().await;
         for (domain, (_, latency)) in best_by_domain {
-            b.insert(domain, latency);
+            if results
+                .iter()
+                .find(|result| result.endpoint.domain == domain)
+                .is_some_and(|result| result.bind_capable)
+            {
+                b.insert(domain, latency);
+            }
         }
     }
 
@@ -689,11 +1155,18 @@ async fn test_single_endpoint(
         strategy,
     );
 
+    let route = resolve_runtime_route(&endpoint).await;
+
     // 使用 30 秒超时防止永久卡住
-    let result = match tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        tester.test_endpoint(&endpoint),
-    )
+    let result = match tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        if route.mode == NETWORK_MODE_DIRECT {
+            let mut result = tester.test_endpoint(&endpoint).await;
+            decorate_direct_result(&mut result, &route);
+            result
+        } else {
+            test_endpoint_via_route(&endpoint, &route).await
+        }
+    })
     .await
     {
         Ok(result) => result,
@@ -716,7 +1189,7 @@ async fn test_single_endpoint(
     }
 
     // 如果测速成功，更新基准延迟
-    if result.success {
+    if result.success && result.bind_capable {
         let baselines = state.baselines.get_baselines_arc();
         let mut b = baselines.lock().await;
         b.insert(endpoint.domain.clone(), result.latency);
@@ -848,53 +1321,42 @@ fn get_current_version() -> String {
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 fn detect_system_proxy() -> Option<String> {
-    // 1. 优先检查环境变量
-    if let Ok(proxy) = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")) {
-        if !proxy.is_empty() {
-            return Some(proxy);
-        }
-    }
-    if let Ok(proxy) = std::env::var("HTTP_PROXY").or_else(|_| std::env::var("http_proxy")) {
-        if !proxy.is_empty() {
-            return Some(proxy);
-        }
-    }
+    detect_system_proxy_inner()
+}
 
-    // 2. Windows: 从注册表读取系统代理
-    #[cfg(target_os = "windows")]
-    {
-        use winreg::enums::HKEY_CURRENT_USER;
-        use winreg::RegKey;
-        if let Ok(key) = RegKey::predef(HKEY_CURRENT_USER)
-            .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
-        {
-            let enabled: u32 = key.get_value("ProxyEnable").unwrap_or(0);
-            if enabled == 1 {
-                if let Ok(server) = key.get_value::<String, _>("ProxyServer") {
-                    if !server.is_empty() {
-                        // 注册表可能存储 "host:port" 或 "http=host:port;https=host:port;socks=host:port"
-                        if server.contains('=') {
-                            // 多协议格式，优先取 http 代理
-                            for part in server.split(';') {
-                                let part = part.trim();
-                                if part.starts_with("http=") {
-                                    let addr = part.trim_start_matches("http=");
-                                    if !addr.is_empty() {
-                                        return Some(format!("http://{}", addr));
-                                    }
-                                }
-                            }
-                        } else {
-                            // 单一代理格式 "host:port"
-                            return Some(format!("http://{}", server));
-                        }
-                    }
-                }
-            }
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+fn get_proxy_env_snapshot() -> ProxyEnvSnapshot {
+    build_proxy_env_snapshot()
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+fn clear_process_proxy_env() -> ProxyEnvSnapshot {
+    for key in PROCESS_PROXY_ENV_KEYS {
+        unsafe {
+            std::env::remove_var(key);
         }
     }
+    build_proxy_env_snapshot()
+}
 
-    None
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn diagnose_endpoint_network(endpoint: Endpoint) -> Result<EndpointNetworkDiagnosis, String> {
+    Ok(diagnose_endpoint_network_internal(&endpoint).await)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn auto_route_endpoints(
+    endpoints: Vec<Endpoint>,
+) -> Result<Vec<EndpointNetworkDiagnosis>, String> {
+    let mut diagnoses = Vec::with_capacity(endpoints.len());
+    for endpoint in endpoints {
+        diagnoses.push(diagnose_endpoint_network_internal(&endpoint).await);
+    }
+    Ok(diagnoses)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -1799,6 +2261,10 @@ pub fn run() {
             check_for_update,
             get_current_version,
             detect_system_proxy,
+            get_proxy_env_snapshot,
+            clear_process_proxy_env,
+            diagnose_endpoint_network,
+            auto_route_endpoints,
             diagnose_update,
             force_download_update,
             // 持续优化

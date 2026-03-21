@@ -166,6 +166,8 @@ export function ImportEndpointsDialog({
         url: p.url,
         domain: p.domain,
         enabled: true,
+        network_mode: 'auto',
+        network_proxy: '',
       })),
     )
   }

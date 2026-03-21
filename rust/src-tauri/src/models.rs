@@ -8,6 +8,10 @@ pub struct Endpoint {
     pub url: String,
     pub domain: String,
     pub enabled: bool,
+    #[serde(default = "default_endpoint_network_mode")]
+    pub network_mode: String,
+    #[serde(default = "default_endpoint_network_proxy")]
+    pub network_proxy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +34,12 @@ pub struct EndpointResult {
     pub speedup_percent: f64,
     #[serde(default)]
     pub use_original: bool,
+    #[serde(default = "default_result_route_mode")]
+    pub route_mode: String,
+    #[serde(default)]
+    pub route_detail: String,
+    #[serde(default = "default_bind_capable")]
+    pub bind_capable: bool,
 }
 
 impl EndpointResult {
@@ -46,6 +56,9 @@ impl EndpointResult {
             original_latency: 0.0,
             speedup_percent: 0.0,
             use_original: false,
+            route_mode: default_result_route_mode(),
+            route_detail: String::new(),
+            bind_capable: default_bind_capable(),
         }
     }
 
@@ -79,6 +92,9 @@ impl EndpointResult {
             original_latency,
             speedup_percent,
             use_original,
+            route_mode: default_result_route_mode(),
+            route_detail: String::new(),
+            bind_capable: default_bind_capable(),
         }
     }
 
@@ -95,6 +111,9 @@ impl EndpointResult {
             original_latency: 0.0,
             speedup_percent: 0.0,
             use_original: false,
+            route_mode: default_result_route_mode(),
+            route_detail: String::new(),
+            bind_capable: default_bind_capable(),
         }
     }
 }
@@ -145,6 +164,40 @@ pub struct UpdateInfo {
     pub release_url: String,
     pub release_notes: String,
     pub published_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteAttempt {
+    pub mode: String,
+    pub success: bool,
+    pub status_code: Option<u16>,
+    pub latency_ms: Option<f64>,
+    pub detail: String,
+    pub proxy_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointNetworkDiagnosis {
+    pub domain: String,
+    pub url: String,
+    pub recommended_mode: String,
+    pub recommended_proxy: String,
+    pub summary: String,
+    pub attempts: Vec<RouteAttempt>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyEnvSnapshot {
+    pub http_proxy: Option<String>,
+    pub https_proxy: Option<String>,
+    pub all_proxy: Option<String>,
+    pub no_proxy: Option<String>,
+    pub detected_system_proxy: Option<String>,
+    pub local_xray_proxy: Option<String>,
+    pub local_xray_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,6 +259,14 @@ fn default_autostart() -> bool {
     false
 } // 开机自启动（默认关闭）
 
+fn default_endpoint_network_mode() -> String {
+    "auto".into()
+}
+
+fn default_endpoint_network_proxy() -> String {
+    String::new()
+}
+
 fn default_endpoints() -> Vec<Endpoint> {
     vec![
         Endpoint {
@@ -213,12 +274,16 @@ fn default_endpoints() -> Vec<Endpoint> {
             url: "https://cf.betterclau.de/claude/anyrouter.top".into(),
             domain: "cf.betterclau.de".into(),
             enabled: true,
+            network_mode: default_endpoint_network_mode(),
+            network_proxy: default_endpoint_network_proxy(),
         },
         Endpoint {
             name: "WONG公益站".into(),
             url: "https://wzw.pp.ua".into(),
             domain: "wzw.pp.ua".into(),
             enabled: true,
+            network_mode: default_endpoint_network_mode(),
+            network_proxy: default_endpoint_network_proxy(),
         },
     ]
 }
@@ -238,6 +303,14 @@ fn default_test_aggressiveness() -> u32 {
 fn default_update_proxy() -> String {
     "auto".into()
 } // "auto" = 自动检测, "" = 不使用, 其他 = 手动指定
+
+fn default_result_route_mode() -> String {
+    "direct".into()
+}
+
+fn default_bind_capable() -> bool {
+    true
+}
 
 /// 测速进度事件类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -301,6 +374,8 @@ mod tests {
             url: "https://test.com/api".into(),
             domain: "test.com".into(),
             enabled: true,
+            network_mode: default_endpoint_network_mode(),
+            network_proxy: default_endpoint_network_proxy(),
         };
         assert_eq!(ep.name, "Test");
         assert_eq!(ep.domain, "test.com");
@@ -314,6 +389,8 @@ mod tests {
             url: "https://test.com".into(),
             domain: "test.com".into(),
             enabled: true,
+            network_mode: default_endpoint_network_mode(),
+            network_proxy: default_endpoint_network_proxy(),
         };
         let result = EndpointResult::success(ep.clone(), "1.2.3.4".into(), 100.0);
 
@@ -330,6 +407,8 @@ mod tests {
             url: "https://test.com".into(),
             domain: "test.com".into(),
             enabled: true,
+            network_mode: default_endpoint_network_mode(),
+            network_proxy: default_endpoint_network_proxy(),
         };
         let result = EndpointResult::failure(ep.clone(), "1.2.3.4".into(), "Timeout".into());
 
@@ -345,6 +424,8 @@ mod tests {
             url: "https://test.com".into(),
             domain: "test.com".into(),
             enabled: true,
+            network_mode: default_endpoint_network_mode(),
+            network_proxy: default_endpoint_network_proxy(),
         };
         // Original: 200ms, Optimized: 100ms -> 50% speedup
         let result = EndpointResult::success_with_comparison(
@@ -371,6 +452,8 @@ mod tests {
             url: "https://test.com".into(),
             domain: "test.com".into(),
             enabled: true,
+            network_mode: default_endpoint_network_mode(),
+            network_proxy: default_endpoint_network_proxy(),
         };
         // 新逻辑：传入的 IP 就是最优 IP（调用方已经选好了）
         // 这里模拟原始 IP 就是最优的情况
@@ -395,6 +478,8 @@ mod tests {
             url: "https://test.com".into(),
             domain: "test.com".into(),
             enabled: true,
+            network_mode: default_endpoint_network_mode(),
+            network_proxy: default_endpoint_network_proxy(),
         };
         // 传入的 IP 恰好等于原始 IP
         let result = EndpointResult::success_with_comparison(
@@ -424,6 +509,8 @@ mod tests {
         assert!(config.continuous_mode); // 默认开启持续优化
         assert_eq!(config.endpoints[0].name, "anyrouter");
         assert!(config.endpoints[0].enabled);
+        assert_eq!(config.endpoints[0].network_mode, "auto");
+        assert!(config.endpoints[0].network_proxy.is_empty());
     }
 
     #[test]

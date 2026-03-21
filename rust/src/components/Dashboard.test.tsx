@@ -3,6 +3,10 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { Dashboard } from './Dashboard'
 import type { Endpoint, EndpointResult, AppConfig } from '../types'
 
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}))
+
 describe('Dashboard', () => {
   const mockEndpoints: Endpoint[] = [
     { name: 'Test 1', url: 'https://test1.com/v1', domain: 'test1.com', enabled: true },
@@ -276,5 +280,47 @@ describe('Dashboard', () => {
     render(<Dashboard {...defaultProps} results={mockResults} />)
 
     expect(screen.queryByTitle(/优选IP全部失败/)).not.toBeInTheDocument()
+  })
+
+  it('auto routes endpoints when clicking 自动选路 button', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    vi.mocked(invoke).mockResolvedValue([
+      {
+        domain: 'test1.com',
+        url: 'https://test1.com/v1',
+        recommendedMode: 'local_xray',
+        recommendedProxy: '',
+        summary: 'local-xray 成功，HTTP 401，120ms',
+        attempts: [],
+      },
+      {
+        domain: 'test2.com',
+        url: 'https://test2.com/v1',
+        recommendedMode: 'direct',
+        recommendedProxy: '',
+        summary: 'direct 成功，HTTP 200，80ms',
+        attempts: [],
+      },
+    ])
+
+    const onEndpointsChange = vi.fn()
+    const onSaveConfig = vi.fn()
+    render(
+      <Dashboard
+        {...defaultProps}
+        onEndpointsChange={onEndpointsChange}
+        onSaveConfig={onSaveConfig}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '自动选路' }))
+
+    expect(await screen.findByText(/自动选路完成/)).toBeInTheDocument()
+    expect(invoke).toHaveBeenCalledWith('auto_route_endpoints', { endpoints: mockEndpoints })
+    expect(onEndpointsChange).toHaveBeenCalledWith([
+      { ...mockEndpoints[0], network_mode: 'local_xray', network_proxy: '' },
+      { ...mockEndpoints[1], network_mode: 'direct', network_proxy: '' },
+    ])
+    expect(onSaveConfig).toHaveBeenCalled()
   })
 })

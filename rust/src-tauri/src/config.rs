@@ -108,6 +108,8 @@ mod tests {
             url: "https://custom.com/api".into(),
             domain: "custom.com".into(),
             enabled: false,
+            network_mode: "auto".into(),
+            network_proxy: String::new(),
         });
 
         manager.save(&config).unwrap();
