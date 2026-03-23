@@ -9,31 +9,25 @@ import { Endpoint, EndpointNetworkDiagnosis, EndpointResult, AppConfig } from '.
 import { ImportEndpointsDialog } from './ImportEndpointsDialog'
 
 const NETWORK_MODE_META: Record<string, { label: string; className: string }> = {
-  auto: {
-    label: '自动选路',
+  system: {
+    label: '跟随系统',
     className: 'bg-apple-gray-100 text-apple-gray-500',
   },
   direct: {
     label: '直连',
     className: 'bg-apple-green/10 text-apple-green',
   },
-  system_proxy: {
-    label: '系统代理',
+  proxy: {
+    label: '使用代理',
     className: 'bg-apple-blue/10 text-apple-blue',
-  },
-  local_xray: {
-    label: '本地 xray',
-    className: 'bg-apple-orange/10 text-apple-orange',
-  },
-  manual_proxy: {
-    label: '手动代理',
-    className: 'bg-purple-100 text-purple-700',
   },
 }
 
+const NETWORK_MODE_CYCLE: string[] = ['system', 'direct', 'proxy']
+
 const normalizeNetworkMode = (mode?: string) => {
-  if (!mode) return 'auto'
-  return NETWORK_MODE_META[mode] ? mode : 'auto'
+  if (!mode) return 'system'
+  return NETWORK_MODE_META[mode] ? mode : 'system'
 }
 
 // 可复制文本组件
@@ -153,8 +147,7 @@ export function Dashboard({
       url: newUrl,
       domain,
       enabled: true,
-      network_mode: 'auto',
-      network_proxy: '',
+      network_mode: 'system',
     }
     const newEndpoints = [...endpoints, newEndpoint]
     onEndpointsChange(newEndpoints)
@@ -258,6 +251,23 @@ export function Dashboard({
     setShowImportDialog(false)
   }
 
+  const cycleNetworkMode = (index: number) => {
+    if (!onEndpointsChange) return
+    const endpoint = endpoints[index]
+    const current = normalizeNetworkMode(endpoint.network_mode)
+    const currentIdx = NETWORK_MODE_CYCLE.indexOf(current)
+    const nextMode = NETWORK_MODE_CYCLE[(currentIdx + 1) % NETWORK_MODE_CYCLE.length]
+    const newEndpoints = [...endpoints]
+    newEndpoints[index] = { ...endpoint, network_mode: nextMode }
+    onEndpointsChange(newEndpoints)
+    onSaveConfig?.(newEndpoints)
+  }
+
+  const cycleNetworkModeByDomain = (domain: string) => {
+    const index = endpoints.findIndex(e => e.domain === domain)
+    if (index !== -1) cycleNetworkMode(index)
+  }
+
   const autoRouteEndpoints = async () => {
     if (!onEndpointsChange || endpoints.length === 0) return
     setRoutingInProgress(true)
@@ -272,20 +282,14 @@ export function Dashboard({
         if (!diagnosis) return endpoint
 
         const nextMode = diagnosis.recommendedMode || normalizeNetworkMode(endpoint.network_mode)
-        const nextProxy = nextMode === 'manual_proxy'
-          ? (diagnosis.recommendedProxy || endpoint.network_proxy || '')
-          : (endpoint.network_proxy || '')
-
         const normalizedCurrentMode = normalizeNetworkMode(endpoint.network_mode)
-        const currentProxy = endpoint.network_proxy || ''
-        if (normalizedCurrentMode !== nextMode || currentProxy !== nextProxy) {
+        if (normalizedCurrentMode !== nextMode) {
           changed += 1
         }
 
         return {
           ...endpoint,
           network_mode: nextMode,
-          network_proxy: nextProxy,
         }
       })
 
@@ -438,6 +442,7 @@ export function Dashboard({
                       onUnbind={boundDomains.has(endpoint.domain) ? () => onUnbindEndpoint(endpoint.domain) : undefined}
                       onTestSingle={() => onTestSingle(endpoint)}
                       onDelete={onEndpointsChange ? () => removeEndpointByDomain(endpoint.domain) : undefined}
+                      onCycleMode={() => cycleNetworkModeByDomain(endpoint.domain)}
                       bindingCount={bindingCount}
                     />
                   )
@@ -527,7 +532,7 @@ export function Dashboard({
                 <span className={`inline-block w-2 h-2 rounded-full ${endpoint.enabled ? 'bg-apple-green' : 'bg-apple-gray-300'}`} />
               </button>
               <span className="font-medium">{endpoint.name}</span>
-              <NetworkModeBadge mode={endpoint.network_mode} />
+              <NetworkModeBadge mode={endpoint.network_mode} onClick={() => cycleNetworkMode(index)} />
               <span className="text-apple-gray-400 font-mono">{endpoint.url}</span>
               <button
                 onClick={() => removeEndpoint(index)}
@@ -704,16 +709,18 @@ function CompactStatus({
   )
 }
 
-function NetworkModeBadge({ mode, title }: { mode?: string; title?: string }) {
+function NetworkModeBadge({ mode, title, onClick }: { mode?: string; title?: string; onClick?: () => void }) {
   const normalized = normalizeNetworkMode(mode)
   const meta = NETWORK_MODE_META[normalized]
   return (
-    <span
-      title={title}
-      className={`inline-flex items-center px-1.5 py-0 rounded-md text-[10px] font-medium ${meta.className}`}
+    <button
+      type="button"
+      title={title || '点击切换网络模式'}
+      onClick={onClick}
+      className={`inline-flex items-center px-1.5 py-0 rounded-md text-[10px] font-medium cursor-pointer hover:opacity-80 transition-opacity ${meta.className}`}
     >
       {meta.label}
-    </span>
+    </button>
   )
 }
 
@@ -823,6 +830,7 @@ function SortableResultRow(props: {
   onUnbind?: () => void
   onTestSingle?: () => void
   onDelete?: () => void
+  onCycleMode?: () => void
   bindingCount?: number
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.id })
@@ -850,6 +858,7 @@ function ResultRow({
   onUnbind,
   onTestSingle,
   onDelete,
+  onCycleMode,
   bindingCount: _bindingCount,
   dragListeners,
 }: {
@@ -862,6 +871,7 @@ function ResultRow({
   onUnbind?: () => void
   onTestSingle?: () => void
   onDelete?: () => void
+  onCycleMode?: () => void
   bindingCount?: number
   dragListeners?: Record<string, unknown>
 }) {
@@ -880,7 +890,7 @@ function ResultRow({
         <div className="text-xs lg:text-sm font-medium text-apple-gray-400 min-w-0">
           <div className="min-w-0 flex flex-col gap-1">
             <span className="truncate">{endpoint.name}</span>
-            <NetworkModeBadge mode={endpoint.network_mode} />
+            <NetworkModeBadge mode={endpoint.network_mode} onClick={onCycleMode} />
           </div>
         </div>
         <CopyableText
@@ -937,6 +947,7 @@ function ResultRow({
             <NetworkModeBadge
               mode={result.route_mode || endpoint.network_mode}
               title={result.route_detail}
+              onClick={onCycleMode}
             />
           </div>
         </div>

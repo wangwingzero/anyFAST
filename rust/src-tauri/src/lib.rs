@@ -26,7 +26,7 @@ use models::{
     HistoryStats, PermissionStatus, ProxyEnvSnapshot, RouteAttempt, UpdateInfo,
 };
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(feature = "tauri-runtime")]
@@ -119,12 +119,9 @@ fn normalize_preferred_ips(raw_ips: Vec<String>) -> Vec<String> {
     normalized
 }
 
-const LOCAL_XRAY_PROXY_URL: &str = "http://127.0.0.1:10808";
-const NETWORK_MODE_AUTO: &str = "auto";
 const NETWORK_MODE_DIRECT: &str = "direct";
-const NETWORK_MODE_SYSTEM_PROXY: &str = "system_proxy";
-const NETWORK_MODE_LOCAL_XRAY: &str = "local_xray";
-const NETWORK_MODE_MANUAL_PROXY: &str = "manual_proxy";
+const NETWORK_MODE_PROXY: &str = "proxy";
+const NETWORK_MODE_SYSTEM: &str = "system";
 const PROCESS_PROXY_ENV_KEYS: [&str; 8] = [
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -147,16 +144,15 @@ struct ResolvedNetworkRoute {
 fn normalize_endpoint_network_mode(value: &str) -> String {
     match value.trim() {
         NETWORK_MODE_DIRECT => NETWORK_MODE_DIRECT.to_string(),
-        NETWORK_MODE_SYSTEM_PROXY => NETWORK_MODE_SYSTEM_PROXY.to_string(),
-        NETWORK_MODE_LOCAL_XRAY => NETWORK_MODE_LOCAL_XRAY.to_string(),
-        NETWORK_MODE_MANUAL_PROXY => NETWORK_MODE_MANUAL_PROXY.to_string(),
-        _ => NETWORK_MODE_AUTO.to_string(),
+        NETWORK_MODE_PROXY | "local_xray" | "manual_proxy" => NETWORK_MODE_PROXY.to_string(),
+        NETWORK_MODE_SYSTEM => NETWORK_MODE_SYSTEM.to_string(),
+        // 旧值兼容：auto / system_proxy / 未知 → system
+        _ => NETWORK_MODE_SYSTEM.to_string(),
     }
 }
 
 fn normalize_endpoint(endpoint: &mut Endpoint) {
     endpoint.network_mode = normalize_endpoint_network_mode(&endpoint.network_mode);
-    endpoint.network_proxy = endpoint.network_proxy.trim().to_string();
 }
 
 fn normalize_endpoints(endpoints: &mut [Endpoint]) {
@@ -167,10 +163,10 @@ fn normalize_endpoints(endpoints: &mut [Endpoint]) {
 
 fn route_display_label(mode: &str) -> String {
     match mode {
-        NETWORK_MODE_SYSTEM_PROXY => "system-proxy".to_string(),
-        NETWORK_MODE_LOCAL_XRAY => "local-xray".to_string(),
-        NETWORK_MODE_MANUAL_PROXY => "manual-proxy".to_string(),
-        _ => "direct".to_string(),
+        NETWORK_MODE_DIRECT => "直连".to_string(),
+        NETWORK_MODE_PROXY => "使用代理".to_string(),
+        NETWORK_MODE_SYSTEM => "跟随系统".to_string(),
+        _ => "跟随系统".to_string(),
     }
 }
 
@@ -229,23 +225,6 @@ fn detect_system_proxy_inner() -> Option<String> {
     detect_env_proxy().or_else(detect_windows_registry_proxy)
 }
 
-fn normalize_proxy_url(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn is_local_proxy_available() -> bool {
-    let addr: SocketAddr = match "127.0.0.1:10808".parse() {
-        Ok(addr) => addr,
-        Err(_) => return false,
-    };
-    TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
-}
-
 fn build_proxy_env_snapshot() -> ProxyEnvSnapshot {
     ProxyEnvSnapshot {
         http_proxy: read_env_proxy("HTTP_PROXY").or_else(|| read_env_proxy("http_proxy")),
@@ -253,8 +232,6 @@ fn build_proxy_env_snapshot() -> ProxyEnvSnapshot {
         all_proxy: read_env_proxy("ALL_PROXY").or_else(|| read_env_proxy("all_proxy")),
         no_proxy: read_env_proxy("NO_PROXY").or_else(|| read_env_proxy("no_proxy")),
         detected_system_proxy: detect_system_proxy_inner(),
-        local_xray_proxy: Some(LOCAL_XRAY_PROXY_URL.to_string()),
-        local_xray_available: is_local_proxy_available(),
     }
 }
 
@@ -274,24 +251,45 @@ async fn probe_endpoint_via_mode(
     let mut builder = reqwest::Client::builder()
         .user_agent(format!("anyFAST/{}", CURRENT_VERSION))
         .timeout(Duration::from_secs(8))
-        .redirect(reqwest::redirect::Policy::limited(3))
-        .no_proxy();
+        .redirect(reqwest::redirect::Policy::limited(3));
 
-    if let Some(proxy_value) = proxy_url.as_ref() {
-        match reqwest::Proxy::all(proxy_value) {
-            Ok(proxy) => {
-                builder = builder.proxy(proxy);
-            }
-            Err(error) => {
+    match mode {
+        NETWORK_MODE_DIRECT => {
+            // 直连：强制不走任何代理
+            builder = builder.no_proxy();
+        }
+        NETWORK_MODE_PROXY => {
+            // 使用代理：先清掉默认代理，再手动添加指定的代理
+            builder = builder.no_proxy();
+            if let Some(proxy_value) = proxy_url.as_ref() {
+                match reqwest::Proxy::all(proxy_value) {
+                    Ok(proxy) => {
+                        builder = builder.proxy(proxy);
+                    }
+                    Err(error) => {
+                        return RouteAttempt {
+                            mode: mode.to_string(),
+                            success: false,
+                            status_code: None,
+                            latency_ms: None,
+                            detail: format!("代理地址无效: {}", error),
+                            proxy_url,
+                        };
+                    }
+                }
+            } else {
                 return RouteAttempt {
                     mode: mode.to_string(),
                     success: false,
                     status_code: None,
                     latency_ms: None,
-                    detail: format!("代理地址无效: {}", error),
-                    proxy_url,
+                    detail: "未检测到系统代理".to_string(),
+                    proxy_url: None,
                 };
             }
+        }
+        _ => {
+            // 跟随系统：不调 no_proxy()，让 reqwest 默认读取系统代理设置
         }
     }
 
@@ -368,54 +366,35 @@ fn pick_recommended_attempt(attempts: &[RouteAttempt]) -> Option<&RouteAttempt> 
 
 async fn diagnose_endpoint_network_internal(endpoint: &Endpoint) -> EndpointNetworkDiagnosis {
     let mut attempts = Vec::new();
+
+    // 测试直连
     attempts.push(probe_endpoint_via_mode(endpoint, NETWORK_MODE_DIRECT, None).await);
 
+    // 测试跟随系统
+    attempts.push(probe_endpoint_via_mode(endpoint, NETWORK_MODE_SYSTEM, None).await);
+
+    // 测试使用代理（仅在检测到系统代理时）
     let system_proxy = detect_system_proxy_inner();
-    if let Some(proxy_url) = system_proxy.clone() {
+    if system_proxy.is_some() {
         attempts.push(
-            probe_endpoint_via_mode(endpoint, NETWORK_MODE_SYSTEM_PROXY, Some(proxy_url)).await,
+            probe_endpoint_via_mode(endpoint, NETWORK_MODE_PROXY, system_proxy).await,
         );
     }
 
-    if is_local_proxy_available() {
-        attempts.push(
-            probe_endpoint_via_mode(
-                endpoint,
-                NETWORK_MODE_LOCAL_XRAY,
-                Some(LOCAL_XRAY_PROXY_URL.to_string()),
-            )
-            .await,
-        );
-    }
-
-    if let Some(proxy_url) = normalize_proxy_url(&endpoint.network_proxy) {
-        let duplicated = attempts.iter().any(|attempt| {
-            attempt.proxy_url.as_deref() == Some(proxy_url.as_str())
-                && attempt.mode == NETWORK_MODE_MANUAL_PROXY
-        });
-        if !duplicated {
-            attempts.push(
-                probe_endpoint_via_mode(endpoint, NETWORK_MODE_MANUAL_PROXY, Some(proxy_url)).await,
-            );
-        }
-    }
-
-    let current_mode = normalize_endpoint_network_mode(&endpoint.network_mode);
     if let Some(best_attempt) = pick_recommended_attempt(&attempts) {
         EndpointNetworkDiagnosis {
             domain: endpoint.domain.clone(),
             url: endpoint.url.clone(),
             recommended_mode: best_attempt.mode.clone(),
-            recommended_proxy: best_attempt.proxy_url.clone().unwrap_or_default(),
             summary: build_route_summary(best_attempt),
             attempts,
         }
     } else {
+        let current_mode = normalize_endpoint_network_mode(&endpoint.network_mode);
         EndpointNetworkDiagnosis {
             domain: endpoint.domain.clone(),
             url: endpoint.url.clone(),
             recommended_mode: current_mode,
-            recommended_proxy: endpoint.network_proxy.clone(),
             summary: "所有候选链路均失败，保留当前策略".to_string(),
             attempts,
         }
@@ -431,31 +410,19 @@ async fn resolve_runtime_route(endpoint: &Endpoint) -> ResolvedNetworkRoute {
             detail: "显式直连".to_string(),
             selected_by_auto: false,
         },
-        NETWORK_MODE_SYSTEM_PROXY => ResolvedNetworkRoute {
+        NETWORK_MODE_PROXY => ResolvedNetworkRoute {
             mode,
             proxy_url: detect_system_proxy_inner(),
-            detail: "显式系统代理".to_string(),
-            selected_by_auto: false,
-        },
-        NETWORK_MODE_LOCAL_XRAY => ResolvedNetworkRoute {
-            mode,
-            proxy_url: Some(LOCAL_XRAY_PROXY_URL.to_string()),
-            detail: "显式本地 xray".to_string(),
-            selected_by_auto: false,
-        },
-        NETWORK_MODE_MANUAL_PROXY => ResolvedNetworkRoute {
-            mode,
-            proxy_url: normalize_proxy_url(&endpoint.network_proxy),
-            detail: "显式手动代理".to_string(),
+            detail: "显式使用代理".to_string(),
             selected_by_auto: false,
         },
         _ => {
-            let diagnosis = diagnose_endpoint_network_internal(endpoint).await;
+            // system 模式：跟随系统，不干预代理设置
             ResolvedNetworkRoute {
-                mode: diagnosis.recommended_mode.clone(),
-                proxy_url: normalize_proxy_url(&diagnosis.recommended_proxy),
-                detail: diagnosis.summary,
-                selected_by_auto: true,
+                mode: NETWORK_MODE_SYSTEM.to_string(),
+                proxy_url: None, // 让 reqwest 自己处理
+                detail: "跟随系统".to_string(),
+                selected_by_auto: false,
             }
         }
     }
@@ -475,17 +442,11 @@ async fn test_endpoint_via_route(
     endpoint: &Endpoint,
     route: &ResolvedNetworkRoute,
 ) -> EndpointResult {
-    if route.mode != NETWORK_MODE_DIRECT && route.proxy_url.is_none() {
-        let reason = match route.mode.as_str() {
-            NETWORK_MODE_SYSTEM_PROXY => "未检测到系统代理",
-            NETWORK_MODE_MANUAL_PROXY => "未配置手动代理地址",
-            NETWORK_MODE_LOCAL_XRAY => "本地 xray 代理不可用",
-            _ => "未获取到代理地址",
-        };
+    if route.mode == NETWORK_MODE_PROXY && route.proxy_url.is_none() {
         let mut result = EndpointResult::failure(
             endpoint.clone(),
             route_display_label(&route.mode),
-            reason.to_string(),
+            "未检测到系统代理".to_string(),
         );
         result.route_mode = route.mode.clone();
         result.route_detail = route.detail.clone();

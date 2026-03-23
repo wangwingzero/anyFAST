@@ -3,8 +3,7 @@ export interface Endpoint {
   url: string
   domain: string
   enabled: boolean
-  network_mode?: string
-  network_proxy?: string
+  network_mode?: string // 'direct' | 'proxy' | 'system'
 }
 
 export interface EndpointResult {
@@ -105,7 +104,6 @@ export interface EndpointNetworkDiagnosis {
   domain: string
   url: string
   recommendedMode: string
-  recommendedProxy: string
   summary: string
   attempts: RouteAttempt[]
 }
@@ -116,8 +114,6 @@ export interface ProxyEnvSnapshot {
   allProxy?: string
   noProxy?: string
   detectedSystemProxy?: string
-  localXrayProxy?: string
-  localXrayAvailable: boolean
 }
 
 // ===== 持续优化事件 =====

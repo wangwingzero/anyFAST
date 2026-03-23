@@ -9,20 +9,18 @@ import { relaunch } from '@tauri-apps/plugin-process'
 // 默认端点（与后端 models.rs 保持一致）
 const DEFAULT_ENDPOINTS: Endpoint[] = [
   {
-    name: 'anyrouter',
-    url: 'https://cf.betterclau.de/claude/anyrouter.top',
-    domain: 'cf.betterclau.de',
+    name: 'luo',
+    url: 'https://luo.hudawang.cn/',
+    domain: 'luo.hudawang.cn',
     enabled: true,
-    network_mode: 'auto',
-    network_proxy: '',
+    network_mode: 'system',
   },
   {
-    name: 'WONG公益站',
-    url: 'https://wzw.pp.ua',
-    domain: 'wzw.pp.ua',
+    name: 'paolu',
+    url: 'https://paolu.hudawang.cn/',
+    domain: 'paolu.hudawang.cn',
     enabled: true,
-    network_mode: 'auto',
-    network_proxy: '',
+    network_mode: 'system',
   },
 ]
 
@@ -543,10 +541,6 @@ export function Settings({
                 <ProxyValueRow label="ALL_PROXY" value={proxyEnvSnapshot?.allProxy} />
                 <ProxyValueRow label="NO_PROXY" value={proxyEnvSnapshot?.noProxy} />
                 <ProxyValueRow label="检测到的系统代理" value={proxyEnvSnapshot?.detectedSystemProxy} />
-                <ProxyValueRow
-                  label="本地 xray 10808"
-                  value={proxyEnvSnapshot?.localXrayAvailable ? (proxyEnvSnapshot?.localXrayProxy || '已监听') : '未发现监听'}
-                />
               </div>
 
               <div className="flex flex-wrap gap-2">

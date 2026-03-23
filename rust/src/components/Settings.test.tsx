@@ -25,8 +25,6 @@ describe('Settings', () => {
     allProxy: undefined,
     noProxy: 'localhost,127.0.0.1,::1',
     detectedSystemProxy: 'http://127.0.0.1:7890',
-    localXrayProxy: 'http://127.0.0.1:10808',
-    localXrayAvailable: true,
   }
 
   const mockEndpoints: Endpoint[] = [

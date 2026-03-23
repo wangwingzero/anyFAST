@@ -10,8 +10,6 @@ pub struct Endpoint {
     pub enabled: bool,
     #[serde(default = "default_endpoint_network_mode")]
     pub network_mode: String,
-    #[serde(default = "default_endpoint_network_proxy")]
-    pub network_proxy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,7 +181,6 @@ pub struct EndpointNetworkDiagnosis {
     pub domain: String,
     pub url: String,
     pub recommended_mode: String,
-    pub recommended_proxy: String,
     pub summary: String,
     pub attempts: Vec<RouteAttempt>,
 }
@@ -196,8 +193,6 @@ pub struct ProxyEnvSnapshot {
     pub all_proxy: Option<String>,
     pub no_proxy: Option<String>,
     pub detected_system_proxy: Option<String>,
-    pub local_xray_proxy: Option<String>,
-    pub local_xray_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,30 +255,24 @@ fn default_autostart() -> bool {
 } // 开机自启动（默认关闭）
 
 fn default_endpoint_network_mode() -> String {
-    "auto".into()
-}
-
-fn default_endpoint_network_proxy() -> String {
-    String::new()
+    "system".into()
 }
 
 fn default_endpoints() -> Vec<Endpoint> {
     vec![
         Endpoint {
-            name: "anyrouter".into(),
-            url: "https://cf.betterclau.de/claude/anyrouter.top".into(),
-            domain: "cf.betterclau.de".into(),
+            name: "luo".into(),
+            url: "https://luo.hudawang.cn/".into(),
+            domain: "luo.hudawang.cn".into(),
             enabled: true,
             network_mode: default_endpoint_network_mode(),
-            network_proxy: default_endpoint_network_proxy(),
         },
         Endpoint {
-            name: "WONG公益站".into(),
-            url: "https://wzw.pp.ua".into(),
-            domain: "wzw.pp.ua".into(),
+            name: "paolu".into(),
+            url: "https://paolu.hudawang.cn/".into(),
+            domain: "paolu.hudawang.cn".into(),
             enabled: true,
             network_mode: default_endpoint_network_mode(),
-            network_proxy: default_endpoint_network_proxy(),
         },
     ]
 }
@@ -375,7 +364,6 @@ mod tests {
             domain: "test.com".into(),
             enabled: true,
             network_mode: default_endpoint_network_mode(),
-            network_proxy: default_endpoint_network_proxy(),
         };
         assert_eq!(ep.name, "Test");
         assert_eq!(ep.domain, "test.com");
@@ -390,7 +378,6 @@ mod tests {
             domain: "test.com".into(),
             enabled: true,
             network_mode: default_endpoint_network_mode(),
-            network_proxy: default_endpoint_network_proxy(),
         };
         let result = EndpointResult::success(ep.clone(), "1.2.3.4".into(), 100.0);
 
@@ -408,7 +395,6 @@ mod tests {
             domain: "test.com".into(),
             enabled: true,
             network_mode: default_endpoint_network_mode(),
-            network_proxy: default_endpoint_network_proxy(),
         };
         let result = EndpointResult::failure(ep.clone(), "1.2.3.4".into(), "Timeout".into());
 
@@ -425,7 +411,6 @@ mod tests {
             domain: "test.com".into(),
             enabled: true,
             network_mode: default_endpoint_network_mode(),
-            network_proxy: default_endpoint_network_proxy(),
         };
         // Original: 200ms, Optimized: 100ms -> 50% speedup
         let result = EndpointResult::success_with_comparison(
@@ -453,7 +438,6 @@ mod tests {
             domain: "test.com".into(),
             enabled: true,
             network_mode: default_endpoint_network_mode(),
-            network_proxy: default_endpoint_network_proxy(),
         };
         // 新逻辑：传入的 IP 就是最优 IP（调用方已经选好了）
         // 这里模拟原始 IP 就是最优的情况
@@ -479,7 +463,6 @@ mod tests {
             domain: "test.com".into(),
             enabled: true,
             network_mode: default_endpoint_network_mode(),
-            network_proxy: default_endpoint_network_proxy(),
         };
         // 传入的 IP 恰好等于原始 IP
         let result = EndpointResult::success_with_comparison(
@@ -507,10 +490,9 @@ mod tests {
         assert_eq!(config.endpoints.len(), 2); // 2个默认站点
         assert!(config.preferred_ips.is_empty()); // 默认自动优选
         assert!(config.continuous_mode); // 默认开启持续优化
-        assert_eq!(config.endpoints[0].name, "anyrouter");
+        assert_eq!(config.endpoints[0].name, "luo");
         assert!(config.endpoints[0].enabled);
-        assert_eq!(config.endpoints[0].network_mode, "auto");
-        assert!(config.endpoints[0].network_proxy.is_empty());
+        assert_eq!(config.endpoints[0].network_mode, "system");
     }
 
     #[test]
