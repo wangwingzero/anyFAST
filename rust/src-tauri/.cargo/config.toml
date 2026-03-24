@@ -1,0 +1,4 @@
+[target.x86_64-pc-windows-msvc]
+# Bundle the MSVC CRT into the executable to avoid "side-by-side configuration is incorrect"
+# on machines that do not have the matching Visual C++ Redistributable installed.
+rustflags = ["-C", "target-feature=+crt-static"]

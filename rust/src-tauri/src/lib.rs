@@ -376,9 +376,7 @@ async fn diagnose_endpoint_network_internal(endpoint: &Endpoint) -> EndpointNetw
     // 测试使用代理（仅在检测到系统代理时）
     let system_proxy = detect_system_proxy_inner();
     if system_proxy.is_some() {
-        attempts.push(
-            probe_endpoint_via_mode(endpoint, NETWORK_MODE_PROXY, system_proxy).await,
-        );
+        attempts.push(probe_endpoint_via_mode(endpoint, NETWORK_MODE_PROXY, system_proxy).await);
     }
 
     if let Some(best_attempt) = pick_recommended_attempt(&attempts) {

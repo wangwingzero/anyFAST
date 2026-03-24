@@ -253,24 +253,6 @@ jobs:
           # 清理 .p12 文件
           rm -f certificate.p12
 
-      - name: Build Windows Service (Windows only)
-        if: matrix.os == 'windows-latest'
-        working-directory: rust/src-tauri
-        shell: pwsh
-        run: |
-          cargo build --release --bin anyfast-service
-          New-Item -ItemType Directory -Path binaries -Force | Out-Null
-          Copy-Item target/release/anyfast-service.exe binaries/anyfast-service-x86_64-pc-windows-msvc.exe
-
-      - name: Configure Windows resources (Windows only)
-        if: matrix.os == 'windows-latest'
-        working-directory: rust/src-tauri
-        shell: pwsh
-        run: |
-          $config = Get-Content tauri.conf.json | ConvertFrom-Json
-          $config.bundle | Add-Member -NotePropertyName "resources" -NotePropertyValue @{"binaries/anyfast-service-x86_64-pc-windows-msvc.exe" = "anyfast-service.exe"} -Force
-          $config | ConvertTo-Json -Depth 10 | Set-Content tauri.conf.json
-
       - name: Build macOS Helper (macOS only)
         if: matrix.os == 'macos-latest'
         working-directory: rust/src-tauri

@@ -19,17 +19,10 @@ fn main() {
     if std::env::var("CARGO_FEATURE_TAURI_RUNTIME").is_ok()
         && std::env::var("CARGO_CFG_TEST").is_err()
     {
-        // 开发模式不要求管理员权限，发布模式要求
-        #[allow(unused_mut)]
-        let mut windows = tauri_build::WindowsAttributes::new();
-
-        #[cfg(not(debug_assertions))]
-        {
-            // 发布模式：要求管理员权限
-            windows = windows.app_manifest(include_str!("app.manifest"));
-        }
-
-        tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
-            .expect("failed to run tauri-build");
+        tauri_build::try_build(
+            tauri_build::Attributes::new()
+                .windows_attributes(tauri_build::WindowsAttributes::new()),
+        )
+        .expect("failed to run tauri-build");
     }
 }
